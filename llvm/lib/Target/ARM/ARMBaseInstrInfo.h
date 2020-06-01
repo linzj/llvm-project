@@ -398,6 +398,8 @@ private:
   virtual void expandLoadStackGuard(MachineBasicBlock::iterator MI) const = 0;
 
   void expandMEMCPY(MachineBasicBlock::iterator) const;
+  void expandRESTORESP(MachineBasicBlock::iterator) const;
+  int getSPAdjust(const MachineInstr &MI) const final override;
 
 private:
   /// Modeling special VFP / NEON fp MLA / MLS hazards.

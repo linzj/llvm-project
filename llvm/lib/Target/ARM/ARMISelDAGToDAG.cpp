@@ -13,6 +13,7 @@
 
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
+#include "ARMMachineFunctionInfo.h"
 #include "ARMTargetMachine.h"
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "Utils/ARMBaseInfo.h"
@@ -60,6 +61,15 @@ public:
       : SelectionDAGISel(tm, OptLevel) {}
 
   bool runOnMachineFunction(MachineFunction &MF) override {
+    const Function &F = MF.getFunction();
+    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+    if (F.hasFnAttribute("js-function-call"))
+      AFI->setJSFunction(true);
+    else if (F.hasFnAttribute("js-stub-call"))
+      AFI->setJSStub(true);
+    if (F.hasFnAttribute("js-wasm-call"))
+      AFI->setWASM(true);
+
     // Reset the subtarget each time through.
     Subtarget = &MF.getSubtarget<ARMSubtarget>();
     SelectionDAGISel::runOnMachineFunction(MF);

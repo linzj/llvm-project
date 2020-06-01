@@ -130,6 +130,13 @@ int ARMTTIImpl::getIntImmCost(unsigned Opcode, unsigned Idx, const APInt &Imm,
   if (Opcode == Instruction::Xor && Imm.isAllOnesValue())
     return 0;
 
+  if ((Opcode == Instruction::GetElementPtr) &&
+      (!ST->isThumb() || ST->isThumb2())) {
+    int64_t SImmVal = Imm.getSExtValue();
+    if (SImmVal < 4096 && SImmVal > -4096)
+      return 0;
+  }
+
   return getIntImmCost(Imm, Ty);
 }
 

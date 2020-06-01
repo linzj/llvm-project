@@ -119,6 +119,8 @@ computeTargetABI(const Triple &TT, StringRef CPU,
     return ARMBaseTargetMachine::ARM_ABI_AAPCS;
   else if (ABIName.startswith("apcs"))
     return ARMBaseTargetMachine::ARM_ABI_APCS;
+  else if (ABIName == "v8")
+    return ARMBaseTargetMachine::ARM_ABI_V8;
 
   llvm_unreachable("Unhandled/unknown ABI Name!");
   return ARMBaseTargetMachine::ARM_ABI_UNKNOWN;
@@ -143,7 +145,8 @@ static std::string computeDataLayout(const Triple &TT, StringRef CPU,
   Ret += "-p:32:32";
 
   // ABIs other than APCS have 64 bit integers with natural alignment.
-  if (ABI != ARMBaseTargetMachine::ARM_ABI_APCS)
+  if (ABI != ARMBaseTargetMachine::ARM_ABI_APCS &&
+      ABI != ARMBaseTargetMachine::ARM_ABI_V8)
     Ret += "-i64:64";
 
   // We have 64 bits floats. The APCS ABI requires them to be aligned to 32
@@ -153,7 +156,8 @@ static std::string computeDataLayout(const Triple &TT, StringRef CPU,
 
   // We have 128 and 64 bit vectors. The APCS ABI aligns them to 32 bits, others
   // to 64. We always ty to give them natural alignment.
-  if (ABI == ARMBaseTargetMachine::ARM_ABI_APCS)
+  if (ABI == ARMBaseTargetMachine::ARM_ABI_APCS ||
+      ABI == ARMBaseTargetMachine::ARM_ABI_V8)
     Ret += "-v64:32:64-v128:32:128";
   else if (ABI != ARMBaseTargetMachine::ARM_ABI_AAPCS16)
     Ret += "-v128:64:128";

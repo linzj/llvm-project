@@ -211,6 +211,7 @@ public:
     Cygnus,
     CoreCLR,
     Simulator,  // Simulator variants of other systems, e.g., Apple's iOS
+    V8,
     LastEnvironmentType = Simulator
   };
   enum ObjectFormatType {

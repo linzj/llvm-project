@@ -220,8 +220,16 @@ namespace CallingConv {
     /// shader if tessellation is in use, or otherwise the vertex shader.
     AMDGPU_ES = 96,
 
+    // Calling convention for v8
+    V8CC = 97,
+
+    // Calling convention for v8 store barrier stub
+    V8SBCC = 98,
+    // Calling convention for v8 C call with fp saved
+    V8FPSave = 99,
+
     // Calling convention between AArch64 Advanced SIMD functions
-    AArch64_VectorCall = 97,
+    AArch64_VectorCall = 100,
 
     /// The highest possible calling convention ID. Must be some 2^k - 1.
     MaxID = 1023

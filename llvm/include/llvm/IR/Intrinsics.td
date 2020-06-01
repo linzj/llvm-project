@@ -907,6 +907,11 @@ def int_experimental_gc_result   : Intrinsic<[llvm_any_ty], [llvm_token_ty],
 def int_experimental_gc_relocate : Intrinsic<[llvm_any_ty],
                                 [llvm_token_ty, llvm_i32_ty, llvm_i32_ty],
                                 [IntrReadMem]>;
+def int_experimental_gc_exception : Intrinsic<[llvm_any_ty], [llvm_token_ty],
+                                             [IntrReadMem]>;
+def int_experimental_gc_exception_data : Intrinsic<[llvm_any_ty],
+                                             [llvm_token_ty],
+                                             [IntrReadMem]>;
 
 //===------------------------ Coroutine Intrinsics ---------------===//
 // These are documented in docs/Coroutines.rst

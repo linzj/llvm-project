@@ -1201,7 +1201,9 @@ RuntimeDyld::RuntimeDyld(RuntimeDyld::MemoryManager &MemMgr,
   // they share a single memory manager.  This can become a problem when page
   // permissions are applied.
   Dyld = nullptr;
-  ProcessAllSections = false;
+  // UC_BUILD
+  // ProcessAllSections = false;
+  ProcessAllSections = true;
   Checker = nullptr;
 }
 

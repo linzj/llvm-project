@@ -34,6 +34,7 @@
 #include "llvm/Transforms/IPO/ForceFunctionAttrs.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
+#include "llvm/Transforms/IPO/SampleProfile.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Scalar.h"
@@ -273,6 +274,8 @@ void PassManagerBuilder::populateFunctionPassManager(
 
 // Do PGO instrumentation generation or use pass as the option specified.
 void PassManagerBuilder::addPGOInstrPasses(legacy::PassManagerBase &MPM) {
+  if (PGOSampleUse.empty())
+    PGOSampleUse = SampleProfileLoaderPass::SampleProfileFileFromOption();
   if (!EnablePGOInstrGen && PGOInstrUse.empty() && PGOSampleUse.empty())
     return;
   // Perform the preinline and cleanup passes for O1 and above.
@@ -425,6 +428,8 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
 
 void PassManagerBuilder::populateModulePassManager(
     legacy::PassManagerBase &MPM) {
+  if (PGOSampleUse.empty())
+    PGOSampleUse = SampleProfileLoaderPass::SampleProfileFileFromOption();
   if (!PGOSampleUse.empty()) {
     MPM.add(createPruneEHPass());
     MPM.add(createSampleProfileLoaderPass(PGOSampleUse));
@@ -755,6 +760,8 @@ void PassManagerBuilder::populateModulePassManager(
 }
 
 void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
+  if (PGOSampleUse.empty())
+    PGOSampleUse = SampleProfileLoaderPass::SampleProfileFileFromOption();
   // Load sample profile before running the LTO optimization pipeline.
   if (!PGOSampleUse.empty()) {
     PM.add(createPruneEHPass());

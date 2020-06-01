@@ -302,7 +302,13 @@ bool BranchProbabilityInfo::calcMetadataWeights(const BasicBlock *BB) {
   assert(WeightSum <= UINT32_MAX &&
          "Expected weights to scale down to 32 bits");
 
-  if (WeightSum == 0 || ReachableIdxs.size() == 0) {
+  bool NoUnreachableHeuristic = false;
+  CallingConv::ID CC = BB->getParent()->getCallingConv();
+  if ((CC == CallingConv::V8CC) || (CC == CallingConv::V8SBCC))
+    NoUnreachableHeuristic = true;
+
+  if (!NoUnreachableHeuristic &&
+      (WeightSum == 0 || ReachableIdxs.size() == 0)) {
     for (unsigned i = 0, e = TI->getNumSuccessors(); i != e; ++i)
       Weights[i] = 1;
     WeightSum = TI->getNumSuccessors();
@@ -315,7 +321,8 @@ bool BranchProbabilityInfo::calcMetadataWeights(const BasicBlock *BB) {
 
   // Examine the metadata against unreachable heuristic.
   // If the unreachable heuristic is more strong then we use it for this edge.
-  if (UnreachableIdxs.size() > 0 && ReachableIdxs.size() > 0) {
+  if (!NoUnreachableHeuristic &&
+      (UnreachableIdxs.size() > 0 && ReachableIdxs.size() > 0)) {
     auto ToDistribute = BranchProbability::getZero();
     auto UnreachableProb = UR_TAKEN_PROB;
     for (auto i : UnreachableIdxs)

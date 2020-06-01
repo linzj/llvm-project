@@ -66,6 +66,12 @@ void LLVMAddTargetLibraryInfo(LLVMTargetLibraryInfoRef TLI,
   unwrap(PM)->add(new TargetLibraryInfoWrapperPass(*unwrap(TLI)));
 }
 
+LLVMTargetLibraryInfoRef LLVMCreateEmptyTargetLibraryInfo() {
+  TargetLibraryInfoImpl *TLII = new TargetLibraryInfoImpl();
+  TLII->disableAllFunctions();
+  return wrap(TLII);
+}
+
 char *LLVMCopyStringRepOfTargetData(LLVMTargetDataRef TD) {
   std::string StringRep = unwrap(TD)->getStringRepresentation();
   return strdup(StringRep.c_str());

@@ -64,6 +64,7 @@ if(LLVM_BUILD_LLVM_DYLIB)
   endif()
 
   target_link_libraries(LLVM PRIVATE ${LIB_NAMES})
+  set_target_properties(LLVM PROPERTIES LINK_FLAGS "-static-libstdc++")
 
   if (APPLE)
     set_property(TARGET LLVM APPEND_STRING PROPERTY

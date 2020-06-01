@@ -89,6 +89,9 @@ bool TargetLowering::parametersInCSRMatch(const MachineRegisterInfo &MRI,
     // (We look for a CopyFromReg reading a virtual register that is used
     //  for the function live-in value of register Reg)
     SDValue Value = OutVals[I];
+    // Ignore the undefined input.
+    if (Value->getOpcode() == ISD::UNDEF)
+      continue;
     if (Value->getOpcode() != ISD::CopyFromReg)
       return false;
     unsigned ArgReg = cast<RegisterSDNode>(Value->getOperand(1))->getReg();

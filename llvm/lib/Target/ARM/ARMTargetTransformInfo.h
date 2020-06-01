@@ -47,6 +47,7 @@ class ARMTTIImpl : public BasicTTIImplBase<ARMTTIImpl> {
 
   const ARMSubtarget *ST;
   const ARMTargetLowering *TLI;
+  const Function *Fn;
 
   // Currently the following features are excluded from InlineFeatureWhitelist.
   // ModeThumb, FeatureNoARM, ModeSoftFloat, FeatureVFPOnlySP, FeatureD16
@@ -87,7 +88,7 @@ class ARMTTIImpl : public BasicTTIImplBase<ARMTTIImpl> {
 public:
   explicit ARMTTIImpl(const ARMBaseTargetMachine *TM, const Function &F)
       : BaseT(TM, F.getParent()->getDataLayout()), ST(TM->getSubtargetImpl(F)),
-        TLI(ST->getTargetLowering()) {}
+        TLI(ST->getTargetLowering()), Fn(&F) {}
 
   bool areInlineCompatible(const Function *Caller,
                            const Function *Callee) const;
@@ -177,6 +178,8 @@ public:
                                TTI::UnrollingPreferences &UP);
 
   bool shouldBuildLookupTablesForConstant(Constant *C) const {
+    if (Fn->getCallingConv() == CallingConv::V8CC)
+      return false;
     // In the ROPI and RWPI relocation models we can't have pointers to global
     // variables or functions in constant data, so don't convert switches to
     // lookup tables if any of the values would need relocation.

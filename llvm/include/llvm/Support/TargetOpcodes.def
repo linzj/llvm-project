@@ -120,6 +120,7 @@ HANDLE_TARGET_OPCODE(FENTRY_CALL)
 /// rewrite calls to runtimes with more efficient code sequences.
 /// This also implies a stack map.
 HANDLE_TARGET_OPCODE(PATCHPOINT)
+HANDLE_TARGET_OPCODE(TCPATCHPOINT)
 
 /// This pseudo-instruction loads the stack guard value. Targets which need
 /// to prevent the stack guard value or address from being spilled to the
@@ -132,6 +133,13 @@ HANDLE_TARGET_OPCODE(LOAD_STACK_GUARD)
 /// intended to support garbage collection with fully precise relocating
 /// collectors and deoptimizations in either the callee or caller.
 HANDLE_TARGET_OPCODE(STATEPOINT)
+
+/// Define a new register from old register, used by gc relocate intrinsic.
+/// It is intended to cause a value to split in MIR.
+HANDLE_TARGET_OPCODE(RELOCATE_DEF)
+
+/// Restore SP from FP, used by V8 functions.
+HANDLE_TARGET_OPCODE(RESTORESP)
 
 /// Instruction that records the offset of a local stack allocation passed to
 /// llvm.localescape. It has two arguments: the symbol for the label and the

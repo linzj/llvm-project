@@ -12,6 +12,7 @@
 
 #include "ARMSubtarget.h"
 #include "llvm/CodeGen/AsmPrinter.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
@@ -64,7 +65,9 @@ class LLVM_LIBRARY_VISIBILITY ARMAsmPrinter : public AsmPrinter {
   /// Set of globals in PromotedGlobals that we've emitted labels for.
   /// We need to emit labels even for promoted globals so that DWARF
   /// debug info can link properly.
-  SmallPtrSet<const GlobalVariable*,2> EmittedPromotedGlobalLabels;
+  SmallPtrSet<const GlobalVariable *, 2> EmittedPromotedGlobalLabels;
+
+  StackMaps SM;
 
 public:
   explicit ARMAsmPrinter(TargetMachine &TM,
@@ -130,6 +133,15 @@ private:
   // emitPseudoExpansionLowering - tblgen'erated.
   bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
                                    const MachineInstr *MI);
+
+  void LowerSTACKMAP(MCStreamer &OutStreamer, StackMaps &SM,
+                     const MachineInstr &MI);
+
+  void LowerPATCHPOINT(MCStreamer &OutStreamer, StackMaps &SM,
+                       const MachineInstr &MI);
+
+  void LowerSTATEPOINT(MCStreamer &OutStreamer, StackMaps &SM,
+                       const MachineInstr &MI);
 
 public:
   unsigned getISAEncoding() override {

@@ -954,6 +954,7 @@ void TargetPassConfig::addMachinePasses() {
   if (getOptLevel() != CodeGenOpt::None)
     addBlockPlacement();
 
+  addPass(&StackMapLivenessID, false);
   addPreEmitPass();
 
   if (TM->Options.EnableIPRA)
@@ -963,7 +964,6 @@ void TargetPassConfig::addMachinePasses() {
 
   addPass(&FuncletLayoutID, false);
 
-  addPass(&StackMapLivenessID, false);
   addPass(&LiveDebugValuesID, false);
 
   // Insert before XRay Instrumentation.

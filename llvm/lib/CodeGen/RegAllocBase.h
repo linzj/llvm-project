@@ -118,6 +118,7 @@ public:
 
 private:
   void seedLiveRegs();
+  void tryHoistToStackSlot();
 };
 
 } // end namespace llvm

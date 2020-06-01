@@ -458,6 +458,14 @@ unsigned MachineRegisterInfo::getLiveInVirtReg(unsigned PReg) const {
   return 0;
 }
 
+void MachineRegisterInfo::updateVirtRegIfLivein(unsigned VReg,
+                                                unsigned VNewReg) {
+  for (auto I = LiveIns.begin(), E = LiveIns.end(); I != E; ++I)
+    if (I->second == VReg) {
+      I->second = VNewReg;
+    }
+}
+
 /// EmitLiveInCopies - Emit copies to initialize livein virtual registers
 /// into the given entry block.
 void

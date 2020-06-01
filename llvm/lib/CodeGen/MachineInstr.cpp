@@ -1304,10 +1304,17 @@ bool MachineInstr::isDereferenceableInvariantLoad(AliasAnalysis *AA) const {
 
   const MachineFrameInfo &MFI = getParent()->getParent()->getFrameInfo();
 
+  bool IsJSFunction = false;
+  CallingConv::ID CC = getParent()->getParent()->getFunction().getCallingConv();
+  if (CC == CallingConv::V8CC || CC == CallingConv::V8SBCC)
+    IsJSFunction = true;
+
   for (MachineMemOperand *MMO : memoperands()) {
     if (MMO->isVolatile()) return false;
     if (MMO->isStore()) return false;
     if (MMO->isInvariant() && MMO->isDereferenceable())
+      continue;
+    if (IsJSFunction && MMO->isInvariant())
       continue;
 
     // A load from a constant PseudoSourceValue is invariant.

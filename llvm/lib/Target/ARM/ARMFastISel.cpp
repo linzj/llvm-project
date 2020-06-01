@@ -1890,6 +1890,10 @@ CCAssignFn *ARMFastISel::CCAssignFnForCall(CallingConv::ID CC,
       report_fatal_error("Can't return in GHC call convention");
     else
       return CC_ARM_APCS_GHC;
+  case CallingConv::V8CC:
+    return (Return ? RetCC_ARM_V8 : CC_ARM_V8);
+  case CallingConv::V8SBCC:
+    return (Return ? RetCC_ARM_V8SB : CC_ARM_V8SB);
   }
 }
 

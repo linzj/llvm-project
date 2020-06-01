@@ -210,6 +210,8 @@ public:
                       unsigned DstSubReg,
                       const TargetRegisterClass *NewRC,
                       LiveIntervals &LIS) const override;
+
+  VirtRegToFixSlotMap getHoistToFixStackSlotMap(MachineFunction &) const final;
 };
 
 } // end namespace llvm

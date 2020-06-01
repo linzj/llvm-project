@@ -30,6 +30,7 @@
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
+#include <unordered_map>
 
 using namespace llvm;
 
@@ -166,4 +167,39 @@ void RegAllocBase::postOptimization() {
     DeadInst->eraseFromParent();
   }
   DeadRemats.clear();
+  tryHoistToStackSlot();
+}
+
+void RegAllocBase::tryHoistToStackSlot() {
+  MachineFunction &MF = VRM->getMachineFunction();
+  auto RegMapping = TRI->getHoistToFixStackSlotMap(MF);
+  if (RegMapping.empty())
+    return;
+  std::unordered_map<int, int> SlotMapping;
+  for (auto &Entry : RegMapping) {
+    int Slot = VRM->getStackSlot(Entry.first);
+    if (Slot == VirtRegMap::NO_STACK_SLOT)
+      continue;
+    SlotMapping.emplace(Slot, Entry.second);
+  }
+  if (SlotMapping.empty())
+    return;
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB)
+      for (unsigned i = 0, ee = MI.getNumOperands(); i != ee; ++i) {
+        MachineOperand &MO = MI.getOperand(i);
+        if (!MO.isFI())
+          continue;
+        int OldFI = MO.getIndex();
+        if (OldFI < 0)
+          continue;
+        auto FoundFI = SlotMapping.find(OldFI);
+        if (FoundFI == SlotMapping.end())
+          continue;
+        int NewFI = FoundFI->second;
+        if (NewFI == OldFI)
+          continue;
+        MO.setIndex(NewFI);
+      }
+  }
 }

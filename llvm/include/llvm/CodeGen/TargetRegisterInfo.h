@@ -968,6 +968,13 @@ public:
     return StringRef(getName(Reg));
   }
 
+  using VirtRegToFixSlotMap = std::vector<std::pair<unsigned, int>>;
+
+  virtual VirtRegToFixSlotMap
+  getHoistToFixStackSlotMap(MachineFunction &) const {
+    return VirtRegToFixSlotMap();
+  }
+
   //===--------------------------------------------------------------------===//
   /// Subtarget Hooks
 

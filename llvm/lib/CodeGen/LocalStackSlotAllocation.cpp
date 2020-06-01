@@ -299,6 +299,7 @@ bool LocalStackSlotPass::insertFrameReferenceRegisters(MachineFunction &Fn) {
       // range, so they don't need any updates.
       if (MI.isDebugInstr() || MI.getOpcode() == TargetOpcode::STATEPOINT ||
           MI.getOpcode() == TargetOpcode::STACKMAP ||
+          MI.getOpcode() == TargetOpcode::TCPATCHPOINT ||
           MI.getOpcode() == TargetOpcode::PATCHPOINT)
         continue;
 

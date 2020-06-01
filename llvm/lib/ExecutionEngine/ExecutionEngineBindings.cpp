@@ -200,6 +200,7 @@ LLVMBool LLVMCreateMCJITCompilerForModule(
          .setErrorStr(&Error)
          .setOptLevel((CodeGenOpt::Level)options.OptLevel)
          .setTargetOptions(targetOptions);
+  builder.setRelocationModel(Reloc::PIC_);
   bool JIT;
   if (Optional<CodeModel::Model> CM = unwrap(options.CodeModel, JIT))
     builder.setCodeModel(*CM);

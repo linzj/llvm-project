@@ -25,6 +25,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/LiveVariables.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
@@ -721,6 +722,10 @@ unsigned ARMBaseInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return 0;
   case TargetOpcode::BUNDLE:
     return getInstBundleLength(MI);
+  case TargetOpcode::TCPATCHPOINT:
+  case TargetOpcode::PATCHPOINT:
+  case TargetOpcode::STATEPOINT:
+    return MI.getOperand(1).getImm();
   case ARM::MOVi16_ga_pcrel:
   case ARM::MOVTi16_ga_pcrel:
   case ARM::t2MOVi16_ga_pcrel:
@@ -1462,6 +1467,72 @@ void ARMBaseInstrInfo::expandMEMCPY(MachineBasicBlock::iterator MI) const {
   BB->erase(MI);
 }
 
+void ARMBaseInstrInfo::expandRESTORESP(MachineBasicBlock::iterator MI) const {
+  MachineBasicBlock *BB = MI->getParent();
+  bool ShouldExpand = true;
+  MachineBasicBlock::iterator it = MI;
+  ++it;
+  MachineBasicBlock::iterator end = MI->getParent()->end();
+  for (; it != end; ++it) {
+    bool IsDef = false, IsUse = false;
+    if (it->isCall()) {
+      break;
+    }
+    for (unsigned i = 0, e = it->getNumOperands(); i != e; ++i) {
+      const MachineOperand &MO = it->getOperand(i);
+      if (!MO.isReg())
+        continue;
+      unsigned MOReg = MO.getReg();
+      if (MOReg != ARM::SP)
+        continue;
+      // Define new sp
+      if (MO.isDef())
+        IsDef = true;
+      else
+        IsUse = true;
+    }
+    // Should expand now.
+    if (IsUse) {
+      break;
+    }
+    if (IsDef) {
+      ShouldExpand = false;
+      break;
+    }
+  }
+  if (ShouldExpand) {
+    MachineFunction *MF = BB->getParent();
+    DebugLoc dl = MI->getDebugLoc();
+
+    ARMFunctionInfo *AFI = MF->getInfo<ARMFunctionInfo>();
+    BuildMI(*BB, MI, dl, get(ARM::SUBri), ARM::SP)
+        .addReg(ARM::R11)
+        .addImm(AFI->getFramePtrSpillOffset())
+        .add(predOps(ARMCC::AL))
+        .add(condCodeOp());
+  }
+  BB->erase(MI);
+}
+
+int ARMBaseInstrInfo::getSPAdjust(const MachineInstr &MI) const {
+
+  const MachineFunction *MF = MI.getParent()->getParent();
+  const ARMFunctionInfo *AFI = MF->getInfo<ARMFunctionInfo>();
+  if (!AFI->isJSFunction() && !AFI->isJSStub())
+    return ARMGenInstrInfo::getSPAdjust(MI);
+  if (MI.isCall()) {
+    if (AFI->isJSStub() || AFI->isJSFunction())
+      return -AFI->popLastSPAdjust();
+  }
+  unsigned FrameSetupOpcode = getCallFrameSetupOpcode();
+  if (MI.getOpcode() == FrameSetupOpcode) {
+    int SPAdj = getFrameSize(MI);
+    AFI->pushLastSPAdjust(SPAdj);
+    return SPAdj;
+  }
+  return 0;
+}
+
 bool ARMBaseInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   if (MI.getOpcode() == TargetOpcode::LOAD_STACK_GUARD) {
     assert(getSubtarget().getTargetTriple().isOSBinFormatMachO() &&
@@ -1476,6 +1547,11 @@ bool ARMBaseInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     return true;
   }
 
+  if (MI.getOpcode() == TargetOpcode::RESTORESP) {
+    expandRESTORESP(MI);
+    return true;
+  }
+  
   // This hook gets to expand COPY instructions before they become
   // copyPhysReg() calls.  Look for VMOVS instructions that can legally be
   // widened to VMOVD.  We prefer the VMOVD when possible because it may be
@@ -1892,6 +1968,9 @@ bool ARMBaseInstrInfo::
 isProfitableToIfCvt(MachineBasicBlock &MBB,
                     unsigned NumCycles, unsigned ExtraPredCycles,
                     BranchProbability Probability) const {
+  CallingConv::ID CallingConv = MBB.getParent()->getFunction().getCallingConv();
+  if (CallingConv == CallingConv::V8CC || CallingConv == CallingConv::V8SBCC)
+    return false;
   if (!NumCycles)
     return false;
 

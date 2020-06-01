@@ -30,6 +30,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -371,7 +372,9 @@ void StackMaps::recordStackMap(const MachineInstr &MI) {
 }
 
 void StackMaps::recordPatchPoint(const MachineInstr &MI) {
-  assert(MI.getOpcode() == TargetOpcode::PATCHPOINT && "expected patchpoint");
+  assert(((MI.getOpcode() == TargetOpcode::PATCHPOINT) ||
+          (MI.getOpcode() == TargetOpcode::TCPATCHPOINT)) &&
+         "expected patchpoint");
 
   PatchPointOpers opers(&MI);
   const int64_t ID = opers.getID();
@@ -443,7 +446,7 @@ void StackMaps::emitFunctionFrameRecords(MCStreamer &OS) {
     LLVM_DEBUG(dbgs() << WSMP << "function addr: " << FR.first
                       << " frame size: " << FR.second.StackSize
                       << " callsite count: " << FR.second.RecordCount << '\n');
-    OS.EmitSymbolValue(FR.first, 8);
+    OS.EmitSymbolValue(FR.first, AP.TM.getProgramPointerSize());
     OS.EmitIntValue(FR.second.StackSize, 8);
     OS.EmitIntValue(FR.second.RecordCount, 8);
   }
