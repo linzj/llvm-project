@@ -250,9 +250,9 @@ def CC_ARM_V8: CallingConv<[
   // (and the same is true for f64 if VFP is not enabled)
   CCIfType<[i32], CCIfAlign<"8", CCAssignToRegWithShadow<[R0, R2], [R0, R1]>>>,
   CCIfType<[i32], CCIf<"ArgFlags.getOrigAlign() != 8",
-                       CCAssignToReg<[R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11]>>>,
+                       CCAssignToReg<[R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R12]>>>,
 
-  CCIfType<[i32], CCAssignToStackWithShadow<4, 4, [R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11]>>,
+  CCIfType<[i32], CCAssignToStackWithShadow<4, 4, [R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R12]>>,
   CCIfType<[f32], CCAssignToReg<[S0, S1, S2, S3, S4, S5, S6, S7, S8,
                                  S9, S10, S11, S12, S13, S14, S15]>>,
   CCIfType<[f64], CCAssignToReg<[D0, D1, D2, D3, D4, D5, D6, D7]>>
@@ -308,8 +308,6 @@ def CSR_V8FPSave: CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, R4,
                                      (sequence "D%u", 31, 0))>;
 
 def CSR_V8SBCC : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, (sequence "D%u", 31, 0))>;
-
-def CSR_DARTCALL : CalleeSavedRegs<(add LR, R11, R10, R5)>;
 
 // R8 is used to pass swifterror, remove it from CSR.
 def CSR_AAPCS_SwiftError : CalleeSavedRegs<(sub CSR_AAPCS, R8)>;

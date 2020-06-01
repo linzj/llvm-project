@@ -90,8 +90,6 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
       // exception handling.
       return CSR_GenericInt_SaveList;
     }
-  } else if (F.hasFnAttribute("dart-call")) {
-    return CSR_DARTCALL_SaveList;
   } else if (F.getCallingConv() == CallingConv::V8CC) {
     return CSR_V8CC_SaveList;
   } else if (F.getCallingConv() == CallingConv::V8SBCC) {
@@ -130,8 +128,6 @@ ARMBaseRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
   if (CC == CallingConv::GHC)
     // This is academic because all GHC calls are (supposed to be) tail calls
     return CSR_NoRegs_RegMask;
-  if (MF.getFunction().hasFnAttribute("dart-call"))
-    return CSR_DARTCALL_RegMask;
   if (CC == CallingConv::V8CC)
     return CSR_V8CC_RegMask;
   if (CC == CallingConv::V8SBCC)
@@ -231,6 +227,10 @@ getReservedRegs(const MachineFunction &MF) const {
   } else if (F.getCallingConv() == CallingConv::V8CC) {
     markSuperRegs(Reserved, ARM::R10);
     markSuperRegs(Reserved, ARM::R11);
+  }
+  if (F.hasFnAttribute("dart-call")) {
+    // reserve R5 for object pool
+    markSuperRegs(Reserved, ARM::R5);
   }
   assert(checkAllSuperRegsMarked(Reserved));
   return Reserved;
