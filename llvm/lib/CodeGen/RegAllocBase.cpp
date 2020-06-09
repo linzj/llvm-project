@@ -21,6 +21,7 @@
 #include "llvm/CodeGen/LiveRegMatrix.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/Pass.h"
@@ -201,5 +202,34 @@ void RegAllocBase::tryHoistToStackSlot() {
           continue;
         MO.setIndex(NewFI);
       }
+  }
+}
+
+void RegAllocBase::removeV8StatepointRegs() {
+  MachineFunction &MF = VRM->getMachineFunction();
+  unsigned StartIdx = 0;
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+      switch (MI.getOpcode()) {
+      case TargetOpcode::STATEPOINT: {
+        // For statepoints, fold deopt and gc arguments, but not call arguments.
+        StartIdx = StatepointOpers(&MI).getVarIdx();
+        if (CallingConv::V8CC !=
+            MI.getOperand(StartIdx + StatepointOpers::CCOffset).getImm())
+          return;
+      } break;
+      default:
+        return;
+      }
+
+      for (int i = MI.getNumOperands() - 1,
+               end = StartIdx + StatepointOpers::NumDeoptOperandsOffset;
+           i != end; --i) {
+        MachineOperand &MO = MI.getOperand(i);
+        if (!MO.isReg())
+          continue;
+        MI.RemoveOperand(i);
+      }
+    }
   }
 }
