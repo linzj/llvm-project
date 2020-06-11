@@ -36,7 +36,6 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegisterClassInfo.h"
 #include "llvm/CodeGen/SlotIndexes.h"
-#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
@@ -58,7 +57,6 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-#include <unordered_set>
 
 using namespace llvm;
 
@@ -166,13 +164,6 @@ namespace {
 
     /// Join compatible live intervals
     void joinAllIntervals();
-
-    /// Remove the redundant move immediate from statepoints.
-    void removeMoveImmediateFromPatchpoint();
-
-    void removeMoveImmediateFromPatchpoint(MachineInstr *MI);
-
-    void foldRelocateDef();
 
     /// Coalesce copies in the specified MBB, putting
     /// copies that cannot yet be coalesced into WorkList.
@@ -3626,122 +3617,6 @@ void RegisterCoalescer::joinAllIntervals() {
   lateLiveIntervalUpdate();
 }
 
-void RegisterCoalescer::removeMoveImmediateFromPatchpoint() {
-  SmallVector<MachineInstr *, 8> WorkList;
-  for (MachineFunction::iterator I = MF->begin(), E = MF->end(); I != E; ++I) {
-    MachineBasicBlock *MBB = &*I;
-    for (MachineInstr &MI : *MBB) {
-      switch (MI.getOpcode()) {
-      case TargetOpcode::STACKMAP:
-      case TargetOpcode::PATCHPOINT:
-      case TargetOpcode::TCPATCHPOINT:
-      case TargetOpcode::STATEPOINT:
-        WorkList.emplace_back(&MI);
-        break;
-      }
-    }
-  }
-  for (MachineInstr *MI : WorkList)
-    removeMoveImmediateFromPatchpoint(MI);
-}
-
-static const MachineInstr *getSingleDef(const MachineRegisterInfo &MRI,
-                                        unsigned Reg) {
-  auto defs_iterator = MRI.def_begin(Reg);
-  auto defs_end = MRI.def_end();
-  int count = 0;
-  MachineInstr *MI = nullptr;
-  for (; defs_iterator != defs_end; ++defs_iterator, ++count) {
-    if (count != 0)
-      return nullptr;
-    MI = defs_iterator->getParent();
-  }
-  return MI;
-}
-
-static bool shouldFoldAsConstant(const MachineOperand &MO,
-                                 const MachineRegisterInfo &MRI, int64_t *imm) {
-  if (!MO.isReg())
-    return false;
-  const MachineOperand *Target = &MO;
-  std::unordered_set<unsigned> Visited;
-  while (true) {
-    auto InsertResult = Visited.emplace(Target->getReg());
-    // Avoid loop.
-    if (!InsertResult.second)
-      return false;
-    const MachineInstr *MI = getSingleDef(MRI, Target->getReg());
-    if (!MI)
-      return false;
-    if (MI->isFullCopy() &&
-        TargetRegisterInfo::isVirtualRegister(MI->getOperand(1).getReg())) {
-      Target = &MI->getOperand(1);
-      continue;
-    }
-    if (!MI->isMoveImmediate())
-      return false;
-    const MachineOperand &ImmOperand = MI->getOperand(1);
-    assert(ImmOperand.isImm());
-    *imm = ImmOperand.getImm();
-    return true;
-  }
-}
-
-void RegisterCoalescer::removeMoveImmediateFromPatchpoint(
-    MachineInstr *PatchPoint) {
-  unsigned StartIdx = 0;
-  switch (PatchPoint->getOpcode()) {
-  case TargetOpcode::STACKMAP: {
-    StartIdx = StackMapOpers(PatchPoint).getVarIdx();
-    break;
-  }
-  case TargetOpcode::TCPATCHPOINT:
-  case TargetOpcode::PATCHPOINT: {
-    StartIdx = PatchPointOpers(PatchPoint).getVarIdx();
-    break;
-  }
-  case TargetOpcode::STATEPOINT: {
-    StartIdx = StatepointOpers(PatchPoint).getVarIdx();
-    break;
-  }
-  default:
-    llvm_unreachable("unexpected stackmap opcode");
-  }
-
-  MachineInstr *NewMI = MF->CreateMachineInstr(
-      TII->get(PatchPoint->getOpcode()), PatchPoint->getDebugLoc(), true);
-  MachineInstrBuilder MIB(*MF, NewMI);
-
-  // No need to fold return, the meta data, and function arguments
-  for (unsigned i = 0; i < StartIdx; ++i)
-    MIB.add(PatchPoint->getOperand(i));
-  for (unsigned i = StartIdx; i < PatchPoint->getNumOperands(); ++i) {
-    MachineOperand &MO = PatchPoint->getOperand(i);
-    int64_t Imm;
-    if (!shouldFoldAsConstant(MO, *MRI, &Imm)) {
-      MIB.add(MO);
-      continue;
-    }
-    MIB.addImm(StackMaps::ConstantOp);
-    MIB.addImm(Imm);
-  }
-  MachineBasicBlock *MBB = PatchPoint->getParent();
-  LIS->ReplaceMachineInstrInMaps(*PatchPoint, *NewMI);
-  MachineBasicBlock::iterator Pos = PatchPoint;
-  MBB->insert(Pos, NewMI);
-  MBB->erase(PatchPoint);
-}
-
-void RegisterCoalescer::foldRelocateDef() {
-  for (MachineFunction::iterator I = MF->begin(), E = MF->end(); I != E; ++I) {
-    MachineBasicBlock *MBB = &*I;
-    for (MachineInstr &MI : *MBB) {
-      if (MI.getOpcode() == TargetOpcode::RELOCATE_DEF)
-        MI.setDesc(TII->get(TargetOpcode::COPY));
-    }
-  }
-}
-
 void RegisterCoalescer::releaseMemory() {
   ErasedInstrs.clear();
   WorkList.clear();
@@ -3776,8 +3651,6 @@ bool RegisterCoalescer::runOnMachineFunction(MachineFunction &fn) {
 
   RegClassInfo.runOnMachineFunction(fn);
 
-  removeMoveImmediateFromPatchpoint();
-  foldRelocateDef();
   // Join (coalesce) intervals if requested.
   if (EnableJoining)
     joinAllIntervals();

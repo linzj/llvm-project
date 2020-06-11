@@ -892,6 +892,7 @@ void TargetPassConfig::addMachinePasses() {
   if (TM->Options.EnableIPRA)
     addPass(createRegUsageInfoPropPass());
 
+  addPass(createStatepointLoweringPass());
   // Run pre-ra passes.
   addPreRegAlloc();
 

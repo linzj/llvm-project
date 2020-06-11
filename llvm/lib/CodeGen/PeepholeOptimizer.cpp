@@ -457,7 +457,7 @@ INITIALIZE_PASS_END(PeepholeOptimizer, DEBUG_TYPE,
 bool PeepholeOptimizer::
 optimizeExtInstr(MachineInstr &MI, MachineBasicBlock &MBB,
                  SmallPtrSetImpl<MachineInstr*> &LocalMIs) {
-  unsigned SrcReg, DstReg, SubIdx;
+  unsigned SrcReg = 0, DstReg = 0, SubIdx = 0;
   if (!TII->isCoalescableExtInstr(MI, SrcReg, DstReg, SubIdx))
     return false;
 
