@@ -231,6 +231,8 @@ getReservedRegs(const MachineFunction &MF) const {
   if (F.hasFnAttribute("dart-call")) {
     // reserve R5 for object pool
     markSuperRegs(Reserved, ARM::R5);
+    // reserve R7 for dispatch table
+    markSuperRegs(Reserved, ARM::R7);
   }
   assert(checkAllSuperRegsMarked(Reserved));
   return Reserved;
