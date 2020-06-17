@@ -8089,7 +8089,9 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
 
   CLI.setDebugLoc(getCurSDLoc())
       .setChain(getRoot())
-      .setCallee(CS.getCallingConv(), ReturnTy, Callee, std::move(Args))
+      .setCallee(ReturnTy,
+                 dyn_cast<CallBase>(CS.getInstruction())->getFunctionType(),
+                 Callee, std::move(Args), CS)
       .setDiscardResult(CS->use_empty())
       .setIsPatchPoint(IsPatchPoint);
 }
