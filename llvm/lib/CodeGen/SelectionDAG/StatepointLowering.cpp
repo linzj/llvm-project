@@ -815,18 +815,7 @@ SelectionDAGBuilder::LowerStatepoint(ImmutableStatepoint ISP,
 #endif
 
   SDValue ActualCallee;
-  SDValue Callee = getValue(ISP.getCalledValue());
-
-  if (ISP.getNumPatchBytes() > 0) {
-    // If we've been asked to emit a nop sequence instead of a call instruction
-    // for this statepoint then don't lower the call target, but use a constant
-    // `undef` instead.  Not lowering the call target lets statepoint clients
-    // get away without providing a physical address for the symbolic call
-    // target at link time.
-    ActualCallee = DAG.getUNDEF(Callee.getValueType());
-  } else {
-    ActualCallee = getValue(ISP.getCalledValue());
-  }
+  ActualCallee = getValue(ISP.getCalledValue());
 
   StatepointLoweringInfo SI(DAG);
   populateCallLoweringInfo(SI.CLI, ISP.getCallSite(),

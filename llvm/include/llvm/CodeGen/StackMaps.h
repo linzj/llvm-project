@@ -300,8 +300,8 @@ private:
                LiveOutVec &LiveOuts) const;
 
   /// Create a live-out register record for the given register @p Reg.
-  LiveOutReg createLiveOutReg(unsigned Reg,
-                              const TargetRegisterInfo *TRI) const;
+  void createLiveOutReg(unsigned Reg, const TargetRegisterInfo *TRI,
+                        LiveOutVec &LiveOuts) const;
 
   /// Parse the register live-out mask and return a vector of live-out
   /// registers that need to be recorded in the stackmap.
@@ -313,6 +313,7 @@ private:
   /// the call from the start of the text section. In special cases (e.g. AnyReg
   /// calling convention) the return register is also recorded if requested.
   void recordStackMapOpers(const MachineInstr &MI, uint64_t ID,
+                           const MachineOperand *Callee,
                            MachineInstr::const_mop_iterator MOI,
                            MachineInstr::const_mop_iterator MOE,
                            bool recordResult = false);
