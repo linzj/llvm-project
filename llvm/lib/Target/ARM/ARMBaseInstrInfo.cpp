@@ -1551,7 +1551,7 @@ bool ARMBaseInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     expandRESTORESP(MI);
     return true;
   }
-  
+
   // This hook gets to expand COPY instructions before they become
   // copyPhysReg() calls.  Look for VMOVS instructions that can legally be
   // widened to VMOVD.  We prefer the VMOVD when possible because it may be
