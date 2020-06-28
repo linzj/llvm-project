@@ -1303,6 +1303,11 @@ MachineBasicBlock *AArch64TargetLowering::EmitInstrWithCustomInserter(
 
   case TargetOpcode::STACKMAP:
   case TargetOpcode::PATCHPOINT:
+  case TargetOpcode::TCPATCHPOINT:
+    return emitPatchPoint(MI, BB);
+  case TargetOpcode::STATEPOINT:
+    // As an implementation detail, STATEPOINT shares the STACKMAP format at
+    // this point in the process.  We diverge later.
     return emitPatchPoint(MI, BB);
 
   case AArch64::CATCHRET:
@@ -2999,6 +3004,8 @@ CCAssignFn *AArch64TargetLowering::CCAssignFnForCall(CallingConv::ID CC,
     return IsVarArg ? CC_AArch64_Win64_VarArg : CC_AArch64_AAPCS;
   case CallingConv::AArch64_VectorCall:
     return CC_AArch64_AAPCS;
+  case CallingConv::V8CC:
+    return CC_AArch64_V8;
   }
 }
 
@@ -3369,6 +3376,7 @@ static bool mayTailCallThisCC(CallingConv::ID CC) {
   case CallingConv::C:
   case CallingConv::PreserveMost:
   case CallingConv::Swift:
+  case CallingConv::V8CC:
     return true;
   default:
     return canGuaranteeTCO(CC);
@@ -3421,7 +3429,8 @@ bool AArch64TargetLowering::isEligibleForTailCallOptimization(
 
   // I want anyone implementing a new calling convention to think long and hard
   // about this assert.
-  assert((!isVarArg || CalleeCC == CallingConv::C) &&
+  assert((!isVarArg || CalleeCC == CallingConv::C ||
+          CalleeCC == CallingConv::V8CC) &&
          "Unexpected variadic calling convention");
 
   LLVMContext &C = *DAG.getContext();
@@ -3846,6 +3855,14 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Add a register mask operand representing the call-preserved registers.
   const uint32_t *Mask;
   const AArch64RegisterInfo *TRI = Subtarget->getRegisterInfo();
+  bool IsDartSharedStubCall = false;
+  [&]() {
+    if (!CLI.CS.isCall())
+      return;
+    const CallBase *Call = cast<CallBase>(CLI.CS.getInstruction());
+    IsDartSharedStubCall = Call->hasFnAttr("dart-shared-stub-call");
+  }();
+
   if (IsThisReturn) {
     // For 'this' returns, use the X0-preserving mask if applicable
     Mask = TRI->getThisReturnPreservedMask(MF, CallConv);
@@ -3853,6 +3870,9 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
       IsThisReturn = false;
       Mask = TRI->getCallPreservedMask(MF, CallConv);
     }
+  }
+  if (IsDartSharedStubCall) {
+    Mask = TRI->getCallPreservedMask(MF, CallingConv::DartSharedStub);
   } else
     Mask = TRI->getCallPreservedMask(MF, CallConv);
 
@@ -11871,6 +11891,13 @@ void AArch64TargetLowering::finalizeLowering(MachineFunction &MF) const {
 }
 
 // Unlike X86, we let frame lowering assign offsets to all catch objects.
-bool AArch64TargetLowering::needsFixedCatchObjects() const {
-  return false;
+bool AArch64TargetLowering::needsFixedCatchObjects() const { return false; }
+
+MachineBasicBlock *
+AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
+                                      MachineBasicBlock *MBB) const {
+  MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
+  MachineFunction &MF = *MI.getMF();
+  MI.addOperand(MF, MachineOperand::CreateReg(AArch64::LR, true, true));
+  return MBB2;
 }

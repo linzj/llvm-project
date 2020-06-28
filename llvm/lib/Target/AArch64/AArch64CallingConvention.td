@@ -380,3 +380,61 @@ def CSR_AArch64_AAVPCS_SCS
     : CalleeSavedRegs<(add CSR_AArch64_AAVPCS, X18)>;
 def CSR_AArch64_AAPCS_SCS
     : CalleeSavedRegs<(add CSR_AArch64_AAPCS, X18)>;
+
+
+def CC_AArch64_V8 : CallingConv<[
+  CCIfType<[iPTR], CCBitConvertToType<i64>>,
+  CCIfType<[v2f32], CCBitConvertToType<v2i32>>,
+  CCIfType<[v2f64, v4f32], CCBitConvertToType<v2i64>>,
+
+  // Big endian vectors must be passed as if they were 1-element vectors so that
+  // their lanes are in a consistent order.
+  CCIfBigEndian<CCIfType<[v2i32, v2f32, v4i16, v4f16, v8i8],
+                         CCBitConvertToType<f64>>>,
+  CCIfBigEndian<CCIfType<[v2i64, v2f64, v4i32, v4f32, v8i16, v8f16, v16i8],
+                         CCBitConvertToType<f128>>>,
+
+  CCIfConsecutiveRegs<CCCustom<"CC_AArch64_Custom_Block">>,
+
+  // Handle i1, i8, i16, i32, i64, f32, f64 and v2f64 by passing in registers,
+  // up to eight each of GPR and FPR.
+  CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
+  CCIfType<[i32], CCAssignToRegWithShadow<[W0, W1, W2, W3, W4, W5, W6, W7],
+                                          [X0, X1, X2, X3, X4, X5, X6, X7]>>,
+  // i128 is split to two i64s, we can't fit half to register X7.
+  CCIfType<[i64], CCIfSplit<CCAssignToRegWithShadow<[X0, X2, X4, X6],
+                                                    [X0, X1, X3, X5]>>>,
+
+  // i128 is split to two i64s, and its stack alignment is 16 bytes.
+  CCIfType<[i64], CCIfSplit<CCAssignToStackWithShadow<8, 16, [X7]>>>,
+
+  CCIfType<
+      [i64],
+      CCAssignToRegWithShadow<
+          [X0, X1, X2, X3, X4, X5, X6, X7, X21, X22, X24, X25, X26, X27, X28],
+          [W0, W1, W2, W3, W4, W5, W6, W7, W21, W22, W24, X25, W26, W27, W28]>>,
+  CCIfType<[f16], CCAssignToRegWithShadow<[H0, H1, H2, H3, H4, H5, H6, H7],
+                                          [Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7]>>,
+  CCIfType<[f32], CCAssignToRegWithShadow<[S0, S1, S2, S3, S4, S5, S6, S7],
+                                          [Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7]>>,
+  CCIfType<[f64], CCAssignToRegWithShadow<[D0, D1, D2, D3, D4, D5, D6, D7],
+                                          [Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7]>>,
+  CCIfType<[v1i64, v2i32, v4i16, v8i8, v1f64, v2f32, v4f16],
+           CCAssignToRegWithShadow<[D0, D1, D2, D3, D4, D5, D6, D7],
+                                   [Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7]>>,
+  CCIfType<[f128, v2i64, v4i32, v8i16, v16i8, v4f32, v2f64, v8f16],
+           CCAssignToReg<[Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7]>>,
+
+  // If more than will fit in registers, pass them on the stack instead.
+  CCIfType<[i1, i8, i16, f16], CCAssignToStack<8, 8>>,
+  CCIfType<[i32, f32], CCAssignToStack<8, 8>>,
+  CCIfType<[i64, f64, v1f64, v2f32, v1i64, v2i32, v4i16, v8i8, v4f16],
+           CCAssignToStack<8, 8>>,
+  CCIfType<[f128, v2i64, v4i32, v8i16, v16i8, v4f32, v2f64, v8f16],
+           CCAssignToStack<16, 16>>
+]>;
+
+def CSR_AArch64_V8 : CalleeSavedRegs<(add LR, FP, X26)>;
+
+def CSR_Dart_Shared_Stub : CalleeSavedRegs<(add LR, FP, (sequence "X%u", 28, 0),
+                                            (sequence "Q%u", 31, 0))>;

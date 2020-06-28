@@ -173,7 +173,7 @@ bool StatepointLowering::foldRelocateDef(MachineFunction &MF) {
         MachineInstr *MaybeCopy = getSingleDef(*MRI, Reg);
         if (!MaybeCopy)
           continue;
-        if (!MaybeCopy->isCopy())
+        if (!MaybeCopy->isFullCopy())
           continue;
         unsigned Src = MaybeCopy->getOperand(1).getReg();
         if (!TargetRegisterInfo::isVirtualRegister(Src))

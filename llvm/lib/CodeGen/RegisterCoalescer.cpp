@@ -3692,35 +3692,6 @@ bool RegisterCoalescer::runOnMachineFunction(MachineFunction &fn) {
     }
   }
 
-  // Fold all the reg with single def with others are phi-def.
-  for (unsigned i = 0, e = MRI->getNumVirtRegs(); i != e; ++i) {
-    unsigned Reg = TargetRegisterInfo::index2VirtReg(i);
-    if (MRI->reg_nodbg_empty(Reg))
-      continue;
-    if (!LIS->hasInterval(Reg))
-      continue;
-    LiveInterval &Interval = LIS->getInterval(Reg);
-    size_t defnum = 0;
-    VNInfo *LastDef = nullptr;
-    for (VNInfo *info : Interval.valnos) {
-      if (!info->isUnused() && !info->isPHIDef()) {
-        defnum++;
-        LastDef = info;
-      }
-    }
-    if (defnum == 1) {
-      LLVM_DEBUG(dbgs() << "Found one def reg: " << Interval << "\n");
-      for (auto &s : Interval) {
-        s.valno = LastDef;
-      }
-      for (VNInfo *info : Interval.valnos) {
-        if (info != LastDef && !info->isUnused())
-          info->markUnused();
-      }
-      Interval.RenumberValues();
-    }
-  }
-
   LLVM_DEBUG(dump());
   if (VerifyCoalescing)
     MF->verify(this, "After register coalescing");

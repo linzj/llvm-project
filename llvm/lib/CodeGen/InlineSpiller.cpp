@@ -41,6 +41,7 @@
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SlotIndexes.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
@@ -217,7 +218,7 @@ private:
   /// Fold all the regs that related to InputReg and live through a
   /// statepoint.
   void foldStatePoints(unsigned Reg);
-  void removeRegFromStatePoint(MachineInstr *MI, unsigned Reg);
+  bool removeRegFromStatePoint(MachineInstr *MI, unsigned Reg);
 
   void markValueUsed(LiveInterval*, VNInfo*);
   bool reMaterializeFor(LiveInterval &, MachineInstr &MI);
@@ -557,8 +558,8 @@ bool InlineSpiller::reMaterializeFor(LiveInterval &VirtReg, MachineInstr &MI) {
     return false;
   }
 
-  if (MI.getOpcode() == TargetOpcode::STATEPOINT) {
-    removeRegFromStatePoint(&MI, VirtReg.reg);
+  if (MI.getOpcode() == TargetOpcode::STATEPOINT &&
+      removeRegFromStatePoint(&MI, VirtReg.reg)) {
     return true;
   }
 
@@ -976,8 +977,21 @@ void InlineSpiller::foldStatePoints(unsigned InputReg) {
       }
       // Handle STATEPOINT, PATCHPOINT
       switch (MI.getOpcode()) {
-      case TargetOpcode::STATEPOINT:
-      case TargetOpcode::PATCHPOINT: {
+      case TargetOpcode::STATEPOINT: {
+        // Ignore the Reg not located in the MI's var range.
+        StatepointOpers SOpers(&MI);
+        unsigned VarIdx = SOpers.getVarIdx();
+        unsigned i;
+        for (i = MI.getNumOperands(); i > VarIdx; --i) {
+          MachineOperand &MO = MI.getOperand(i - 1);
+          if (!MO.isReg())
+            continue;
+          if (MO.getReg() == Reg) {
+            break;
+          }
+        }
+        if (i == VarIdx)
+          continue;
         // Ignore if the input reg's live range does not contain
         // the MI.
         SlotIndex Idx = LIS.getInstructionIndex(MI).getRegSlot();
@@ -997,14 +1011,20 @@ void InlineSpiller::foldStatePoints(unsigned InputReg) {
   }
 }
 
-void InlineSpiller::removeRegFromStatePoint(MachineInstr *MI, unsigned Reg) {
-  for (unsigned i = MI->getNumOperands(); i; --i) {
+bool InlineSpiller::removeRegFromStatePoint(MachineInstr *MI, unsigned Reg) {
+  StatepointOpers SOpers(MI);
+  unsigned VarIdx = SOpers.getVarIdx();
+  bool removed = false;
+  for (unsigned i = MI->getNumOperands(); i > VarIdx; --i) {
     MachineOperand &MO = MI->getOperand(i - 1);
     if (!MO.isReg())
       continue;
-    if (MO.getReg() == Reg)
+    if (MO.getReg() == Reg) {
       MI->RemoveOperand(i - 1);
+      removed = true;
+    }
   }
+  return removed;
 }
 
 /// spillAroundUses - insert spill code around each use of Reg.

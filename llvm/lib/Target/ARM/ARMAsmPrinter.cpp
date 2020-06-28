@@ -2136,7 +2136,10 @@ void ARMAsmPrinter::LowerPATCHPOINT(MCStreamer &OutStreamer, StackMaps &SM,
 
   PatchPointOpers Opers(&MI);
 
-  int64_t CallTarget = Opers.getCallTarget().getImm();
+  const MachineOperand &CallTargetOperand = Opers.getCallTarget();
+  int64_t CallTarget = 0;
+  if (CallTargetOperand.isImm())
+    CallTarget = CallTargetOperand.getImm();
   unsigned EncodedBytes = 0;
   if (CallTarget) {
     assert((CallTarget & 0xFFFFFFFFLL) == CallTarget &&

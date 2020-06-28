@@ -54,13 +54,15 @@ AArch64RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   if (MF->getFunction().getCallingConv() == CallingConv::AArch64_VectorCall)
     return CSR_AArch64_AAVPCS_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::CXX_FAST_TLS)
-    return MF->getInfo<AArch64FunctionInfo>()->isSplitCSR() ?
-           CSR_AArch64_CXX_TLS_Darwin_PE_SaveList :
-           CSR_AArch64_CXX_TLS_Darwin_SaveList;
-  if (MF->getSubtarget<AArch64Subtarget>().getTargetLowering()
+    return MF->getInfo<AArch64FunctionInfo>()->isSplitCSR()
+               ? CSR_AArch64_CXX_TLS_Darwin_PE_SaveList
+               : CSR_AArch64_CXX_TLS_Darwin_SaveList;
+  if (MF->getFunction().getCallingConv() == CallingConv::V8CC)
+    return CSR_AArch64_V8_SaveList;
+  if (MF->getSubtarget<AArch64Subtarget>()
+          .getTargetLowering()
           ->supportSwiftError() &&
-      MF->getFunction().getAttributes().hasAttrSomewhere(
-          Attribute::SwiftError))
+      MF->getFunction().getAttributes().hasAttrSomewhere(Attribute::SwiftError))
     return CSR_AArch64_AAPCS_SwiftError_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::PreserveMost)
     return CSR_AArch64_RT_MostRegs_SaveList;
@@ -121,7 +123,14 @@ AArch64RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
                : CSR_AArch64_CXX_TLS_Darwin_RegMask;
   if (CC == CallingConv::AArch64_VectorCall)
     return SCS ? CSR_AArch64_AAVPCS_SCS_RegMask : CSR_AArch64_AAVPCS_RegMask;
-  if (MF.getSubtarget<AArch64Subtarget>().getTargetLowering()
+  if (CC == CallingConv::V8CC)
+    return CSR_AArch64_V8_RegMask;
+
+  if (CC == CallingConv::DartSharedStub)
+    return CSR_Dart_Shared_Stub_RegMask;
+
+  if (MF.getSubtarget<AArch64Subtarget>()
+          .getTargetLowering()
           ->supportSwiftError() &&
       MF.getFunction().getAttributes().hasAttrSomewhere(Attribute::SwiftError))
     return SCS ? CSR_AArch64_AAPCS_SwiftError_SCS_RegMask
@@ -207,6 +216,22 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   if (MF.getFunction().hasFnAttribute(Attribute::SpeculativeLoadHardening))
     markSuperRegs(Reserved, AArch64::W16);
 
+  if (MF.getFunction().getCallingConv() == CallingConv::V8CC) {
+    markSuperRegs(Reserved, AArch64::W29);
+    markSuperRegs(Reserved, AArch64::W26);
+  }
+  if (MF.getFunction().hasFnAttribute("dart-call")) {
+    // reserve W27 for object pool
+    markSuperRegs(Reserved, AArch64::W27);
+    // reserve W21 for dispatch table
+    markSuperRegs(Reserved, AArch64::W21);
+    // reserve W28 for barrier mask
+    markSuperRegs(Reserved, AArch64::W28);
+    // reserve W22 for null object
+    markSuperRegs(Reserved, AArch64::W22);
+    // reserve W15 for SP
+    markSuperRegs(Reserved, AArch64::W15);
+  }
   assert(checkAllSuperRegsMarked(Reserved));
   return Reserved;
 }

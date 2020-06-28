@@ -105,6 +105,10 @@ unsigned AArch64InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     NumBytes = PatchPointOpers(&MI).getNumPatchBytes();
     assert(NumBytes % 4 == 0 && "Invalid number of NOP bytes requested!");
     break;
+  case TargetOpcode::STATEPOINT:
+    NumBytes = StatepointOpers(&MI).getNumPatchBytes();
+    assert(NumBytes % 4 == 0 && "Invalid number of NOP bytes requested!");
+    break;
   case AArch64::TLSDESC_CALLSEQ:
     // This gets lowered to an instruction sequence which takes 16 bytes
     NumBytes = 16;

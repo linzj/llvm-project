@@ -718,6 +718,8 @@ private:
   bool shouldNormalizeToSelectSequence(LLVMContext &, EVT) const override;
 
   void finalizeLowering(MachineFunction &MF) const override;
+  MachineBasicBlock *emitPatchPoint(MachineInstr &MI,
+                                    MachineBasicBlock *MBB) const;
 };
 
 namespace AArch64 {

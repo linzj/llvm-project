@@ -569,6 +569,8 @@ StringRef ARM::computeDefaultTargetABI(const Triple &TT, StringRef CPU) {
     return "aapcs";
   case Triple::V8:
     return "v8";
+  case Triple::Dart:
+    return "dart";
   default:
     if (TT.isOSNetBSD())
       return "apcs-gnu";
