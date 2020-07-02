@@ -2850,7 +2850,8 @@ class BaseLoadStoreUI<bits<2> sz, bit V, bits<2> opc, dag oops, dag iops,
 
 multiclass LoadUI<bits<2> sz, bit V, bits<2> opc, RegisterOperand regtype,
                   Operand indextype, string asm, list<dag> pattern> {
-  let AddedComplexity = 10, mayLoad = 1, mayStore = 0, hasSideEffects = 0 in
+  let AddedComplexity = 10, mayLoad = 1, mayStore = 0, hasSideEffects = 0,
+      isReMaterializable = 1 in
   def ui : BaseLoadStoreUI<sz, V, opc, (outs regtype:$Rt),
                            (ins GPR64sp:$Rn, indextype:$offset),
                            asm, pattern>,
