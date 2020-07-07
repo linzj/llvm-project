@@ -380,6 +380,9 @@ RuntimeDyldImpl::loadObjectImpl(const object::ObjectFile &Obj) {
     // section so that they can be verified.
     if (Checker)
       Checker->registerStubMap(Obj.getFileName(), SectionID, Stubs);
+    if (ProcessAllSections &&
+        findOrEmitSection(Obj, *SI, false, LocalSections)) {
+    }
   }
 
   // Give the subclasses a chance to tie-up any loose ends.
