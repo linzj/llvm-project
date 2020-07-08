@@ -436,5 +436,6 @@ def CC_AArch64_V8 : CallingConv<[
 
 def CSR_AArch64_V8 : CalleeSavedRegs<(add LR, FP, X26)>;
 
-def CSR_Dart_Shared_Stub : CalleeSavedRegs<(add LR, FP, (sequence "X%u", 28, 0),
+def CSR_Dart_Shared_Stub : CalleeSavedRegs<(add LR, FP, (sequence "X%u", 28, 18),
+                                            (sequence "X%u", 15, 0),
                                             (sequence "Q%u", 31, 0))>;
