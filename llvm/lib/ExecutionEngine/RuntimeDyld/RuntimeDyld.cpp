@@ -746,6 +746,7 @@ RuntimeDyldImpl::emitSection(const ObjectFile &Obj,
 
   uintptr_t Allocate;
   unsigned SectionID = Sections.size();
+  unsigned RealSectionID = Section.getIndex();
   uint8_t *Addr;
   const char *pData = nullptr;
 
@@ -774,10 +775,10 @@ RuntimeDyldImpl::emitSection(const ObjectFile &Obj,
     Allocate = DataSize + PaddingSize + StubBufSize;
     if (!Allocate)
       Allocate = 1;
-    Addr = IsCode ? MemMgr.allocateCodeSection(Allocate, Alignment, SectionID,
-                                               Name)
-                  : MemMgr.allocateDataSection(Allocate, Alignment, SectionID,
-                                               Name, IsReadOnly);
+    Addr = IsCode ? MemMgr.allocateCodeSection(Allocate, Alignment,
+                                               RealSectionID, Name)
+                  : MemMgr.allocateDataSection(Allocate, Alignment,
+                                               RealSectionID, Name, IsReadOnly);
     if (!Addr)
       report_fatal_error("Unable to allocate section memory!");
 
