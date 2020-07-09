@@ -1875,6 +1875,8 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     if (!CLI.CS.isCall())
       return;
     const CallBase *Call = dyn_cast<CallBase>(CLI.CS.getInstruction());
+    if (Call->hasFnAttr("dart-c-call"))
+      hasJSCCall = false;
     if (CallerCC == CallingConv::V8SBCC && hasJSCCall)
       IsCCallInsideJSSaveFP = Call->hasFnAttr("save-fp");
     IsDartSharedStubCall = Call->hasFnAttr("dart-shared-stub-call");
