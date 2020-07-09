@@ -229,9 +229,11 @@ namespace CallingConv {
     V8FPSave = 99,
     // For dart shared stubs.
     DartSharedStub = 100,
+    // For dart C calls.
+    DartCCall = 101,
 
     // Calling convention between AArch64 Advanced SIMD functions
-    AArch64_VectorCall = 101,
+    AArch64_VectorCall = 102,
 
     /// The highest possible calling convention ID. Must be some 2^k - 1.
     MaxID = 1023

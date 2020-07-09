@@ -129,6 +129,9 @@ AArch64RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
   if (CC == CallingConv::DartSharedStub)
     return CSR_Dart_Shared_Stub_RegMask;
 
+  if (CC == CallingConv::DartCCall)
+    return CSR_Dart_C_Call_RegMask;
+
   if (MF.getSubtarget<AArch64Subtarget>()
           .getTargetLowering()
           ->supportSwiftError() &&

@@ -3856,11 +3856,13 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   const uint32_t *Mask;
   const AArch64RegisterInfo *TRI = Subtarget->getRegisterInfo();
   bool IsDartSharedStubCall = false;
+  bool IsDartCCall = false;
   [&]() {
     if (!CLI.CS.isCall())
       return;
     const CallBase *Call = cast<CallBase>(CLI.CS.getInstruction());
     IsDartSharedStubCall = Call->hasFnAttr("dart-shared-stub-call");
+    IsDartCCall = Call->hasFnAttr("dart-c-call");
   }();
 
   if (IsThisReturn) {
@@ -3873,6 +3875,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   }
   if (IsDartSharedStubCall) {
     Mask = TRI->getCallPreservedMask(MF, CallingConv::DartSharedStub);
+  } else if (IsDartCCall) {
+    Mask = TRI->getCallPreservedMask(MF, CallingConv::DartCCall);
   } else
     Mask = TRI->getCallPreservedMask(MF, CallConv);
 
