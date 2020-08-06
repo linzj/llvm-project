@@ -162,8 +162,7 @@ AArch64Subtarget::AArch64Subtarget(const Triple &TT, const std::string &CPU,
     : AArch64GenSubtargetInfo(TT, CPU, FS),
       ReserveXRegister(AArch64::GPR64commonRegClass.getNumRegs()),
       CustomCallSavedXRegs(AArch64::GPR64commonRegClass.getNumRegs()),
-      IsLittle(LittleEndian),
-      TargetTriple(TT), FrameLowering(),
+      IsLittle(LittleEndian), TargetTriple(TT), FrameLowering(TT),
       InstrInfo(initializeSubtargetDependencies(FS, CPU)), TSInfo(),
       TLInfo(TM, *this) {
   if (AArch64::isX18ReservedByDefault(TT))

@@ -20,8 +20,9 @@ namespace llvm {
 
 class AArch64FrameLowering : public TargetFrameLowering {
 public:
-  explicit AArch64FrameLowering()
-      : TargetFrameLowering(StackGrowsDown, 16, 0, 16,
+  explicit AArch64FrameLowering(const Triple &TargetTriple)
+      : TargetFrameLowering(StackGrowsDown, SelectStackAlign(TargetTriple), 0,
+                            SelectStackAlign(TargetTriple),
                             true /*StackRealignable*/) {}
 
   void emitCalleeSavedFrameMoves(MachineBasicBlock &MBB,
@@ -83,6 +84,12 @@ public:
 private:
   bool shouldCombineCSRLocalStackBump(MachineFunction &MF,
                                       unsigned StackBumpBytes) const;
+
+  inline unsigned SelectStackAlign(const Triple &TargetTriple) {
+    if (TargetTriple.getEnvironment() == Triple::Dart)
+      return 8;
+    return 16;
+  }
 };
 
 } // End llvm namespace

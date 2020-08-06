@@ -2888,8 +2888,10 @@ void llvm::emitFrameOffset(MachineBasicBlock &MBB,
   if (DestReg == SrcReg && Offset == 0)
     return;
 
-  assert((DestReg != AArch64::SP || Offset % 16 == 0) &&
-         "SP increment/decrement not 16-byte aligned");
+  assert((MBB.getParent()->getTarget().getTargetTriple().getEnvironment() ==
+          Triple::Dart) ||
+         (DestReg != AArch64::SP || Offset % 16 == 0) &&
+             "SP increment/decrement not 16-byte aligned");
 
   bool isSub = Offset < 0;
   if (isSub)

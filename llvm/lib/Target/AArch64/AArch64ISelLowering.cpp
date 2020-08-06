@@ -595,7 +595,11 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
 
   MaxStoresPerMemmoveOptSize = MaxStoresPerMemmove = 4;
 
-  setStackPointerRegisterToSaveRestore(AArch64::SP);
+  if (TM.getTargetTriple().getEnvironment() == Triple::Dart) {
+    setStackPointerRegisterToSaveRestore(AArch64::X15);
+  } else {
+    setStackPointerRegisterToSaveRestore(AArch64::SP);
+  }
 
   setSchedulingPreference(Sched::Hybrid);
 

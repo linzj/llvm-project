@@ -286,3 +286,7 @@ void LLVMAddLowerExpectIntrinsicPass(LLVMPassManagerRef PM) {
 void LLVMAddUnifyFunctionExitNodesPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createUnifyFunctionExitNodesPass());
 }
+
+void LLVMAddRewriteStatepointsForGCLegacyPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createRewriteStatepointsForGCLegacyPass());
+}
