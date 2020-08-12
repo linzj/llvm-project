@@ -103,6 +103,9 @@ AArch64RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   case CallingConv::ARM64EC_Thunk_X64:
     return CSR_Win_AArch64_Arm64EC_Thunk_SaveList;
 
+  case CallingConv::V8CC:
+    return CSR_AArch64_V8_SaveList;
+
   case CallingConv::PreserveMost:
     if (Darwin)
       return CSR_Darwin_AArch64_RT_MostRegs_SaveList;
@@ -300,7 +303,17 @@ AArch64RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
     return CSR_AArch64_SME_ABI_Support_Routines_PreserveMost_From_X2_RegMask;
   if (CC == CallingConv::CFGuard_Check)
     return CSR_Win_AArch64_CFGuard_Check_RegMask;
-  if (MF.getSubtarget<AArch64Subtarget>().getTargetLowering()
+  if (CC == CallingConv::V8CC)
+    return CSR_AArch64_V8_RegMask;
+
+  if (CC == CallingConv::DartSharedStub)
+    return CSR_Dart_Shared_Stub_RegMask;
+
+  if (CC == CallingConv::DartCCall)
+    return CSR_Dart_C_Call_RegMask;
+
+  if (MF.getSubtarget<AArch64Subtarget>()
+          .getTargetLowering()
           ->supportSwiftError() &&
       MF.getFunction().getAttributes().hasAttrSomewhere(Attribute::SwiftError))
     return SCS ? CSR_AArch64_AAPCS_SwiftError_SCS_RegMask
@@ -489,6 +502,23 @@ AArch64RegisterInfo::getStrictlyReservedRegs(const MachineFunction &MF) const {
     markSuperRegs(Reserved, AArch64::X28);
     markSuperRegs(Reserved, AArch64::W27);
     markSuperRegs(Reserved, AArch64::W28);
+  }
+
+  if (MF.getFunction().getCallingConv() == CallingConv::V8CC) {
+    markSuperRegs(Reserved, AArch64::W29);
+    markSuperRegs(Reserved, AArch64::W26);
+  }
+  if (MF.getFunction().hasFnAttribute("dart-call")) {
+    // reserve W27 for object pool
+    markSuperRegs(Reserved, AArch64::W27);
+    // reserve W21 for dispatch table
+    markSuperRegs(Reserved, AArch64::W21);
+    // reserve W28 for barrier mask
+    markSuperRegs(Reserved, AArch64::W28);
+    // reserve W22 for null object
+    markSuperRegs(Reserved, AArch64::W22);
+    // reserve W15 for SP
+    markSuperRegs(Reserved, AArch64::W15);
   }
 
   assert(checkAllSuperRegsMarked(Reserved));

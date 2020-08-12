@@ -5617,6 +5617,14 @@ bool InstCombinerImpl::tryToSinkInstruction(Instruction *I,
       return false;
   }
 
+  // Cannot move gc exceptions intrinsics.
+  if (auto *CI = dyn_cast<IntrinsicInst>(I)) {
+    Intrinsic::ID IID = CI->getIntrinsicID();
+    if (IID == Intrinsic::experimental_gc_exception ||
+        IID == Intrinsic::experimental_gc_exception_data)
+      return false;
+  }
+
   // We can only sink load instructions if there is nothing between the load and
   // the end of block that could change the value.
   if (I->mayReadFromMemory() &&

@@ -31,7 +31,9 @@ enum ARMABI {
   ARM_ABI_UNKNOWN,
   ARM_ABI_APCS,
   ARM_ABI_AAPCS, // ARM EABI
-  ARM_ABI_AAPCS16
+  ARM_ABI_AAPCS16,
+  ARM_ABI_V8,
+  ARM_ABI_Dart
 };
 
 // Arch extension modifiers for CPUs.

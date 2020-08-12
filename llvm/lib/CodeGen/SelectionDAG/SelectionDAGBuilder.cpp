@@ -7990,6 +7990,12 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
   case Intrinsic::experimental_gc_relocate:
     visitGCRelocate(cast<GCRelocateInst>(I));
     return;
+  case Intrinsic::experimental_gc_exception:
+    visitGCException(cast<GCExceptionInst>(I));
+    return;
+  case Intrinsic::experimental_gc_exception_data:
+    visitGCExceptionData(cast<GCExceptionDataInst>(I));
+    return;
   case Intrinsic::instrprof_cover:
     llvm_unreachable("instrprof failed to lower a cover");
   case Intrinsic::instrprof_increment:
@@ -11091,7 +11097,10 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setDiscardResult(Call->use_empty())
       .setIsPatchPoint(IsPatchPoint)
       .setIsPreallocated(
-          Call->countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0);
+          Call->countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0)
+      .setDartCCall(Call->hasFnAttr("dart-c-call"))
+      .setJSSaveFP(Call->hasFnAttr("save-fp"))
+      .setDartSharedStubCall(Call->hasFnAttr("dart-shared-stub-call"));
 }
 
 /// Add a stack map intrinsic call's live variable operands to a stackmap
@@ -11194,6 +11203,32 @@ void SelectionDAGBuilder::visitStackmap(const CallInst &CI) {
   FuncInfo.MF->getFrameInfo().setHasStackMap();
 }
 
+static bool isPatchpointInTailCallPosition(const CallBase &CB) {
+  const Instruction *I = &CB;
+  const BasicBlock *ExitBB = I->getParent();
+  const Instruction *Term = ExitBB->getTerminator();
+  const ReturnInst *Ret = dyn_cast<ReturnInst>(Term);
+  // If Term is not a ReturnInst, then it must be a UnreachableInst.
+  if (!Ret && !isa<UnreachableInst>(Term))
+    return false;
+  // Copy from isInTailCallPosition.
+  // If I will have a chain, make sure no other instruction that will have a
+  // chain interposes between I and the return.
+  if (I->mayHaveSideEffects() || I->mayReadFromMemory() ||
+      !isSafeToSpeculativelyExecute(I))
+    for (BasicBlock::const_iterator BBI = std::prev(ExitBB->end(), 2);; --BBI) {
+      if (&*BBI == I)
+        break;
+      // Debug info intrinsics do not get in the way of tail call optimization.
+      if (isa<DbgInfoIntrinsic>(BBI))
+        continue;
+      if (BBI->mayHaveSideEffects() || BBI->mayReadFromMemory() ||
+          !isSafeToSpeculativelyExecute(&*BBI))
+        return false;
+    }
+  return true;
+}
+
 /// Lower llvm.experimental.patchpoint directly to its target opcode.
 void SelectionDAGBuilder::visitPatchpoint(const CallBase &CB,
                                           const BasicBlock *EHPadBB) {
@@ -11237,68 +11272,129 @@ void SelectionDAGBuilder::visitPatchpoint(const CallBase &CB,
   TargetLowering::CallLoweringInfo CLI(DAG);
   populateCallLoweringInfo(CLI, &CB, NumMetaOpers, NumCallArgs, Callee,
                            ReturnTy, CB.getAttributes().getRetAttrs(), true);
+  CLI.IsTailCall = isPatchpointInTailCallPosition(CB);
+  assert((!CLI.IsTailCall || !HasDef) &&
+         "TailCall should not has a return type");
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
+  SDNode *Call;
+  assert(CLI.IsTailCall || !HasTailCall);
+  if (!CLI.IsTailCall) {
+    SDNode *CallEnd = Result.second.getNode();
+    if (CallEnd->getOpcode() == ISD::EH_LABEL)
+      CallEnd = CallEnd->getOperand(0).getNode();
+    if (HasDef && (CallEnd->getOpcode() == ISD::CopyFromReg))
+      CallEnd = CallEnd->getOperand(0).getNode();
 
-  SDNode *CallEnd = Result.second.getNode();
-  if (CallEnd->getOpcode() == ISD::EH_LABEL)
-    CallEnd = CallEnd->getOperand(0).getNode();
-  if (HasDef && (CallEnd->getOpcode() == ISD::CopyFromReg))
-    CallEnd = CallEnd->getOperand(0).getNode();
-
-  /// Get a call instruction from the call sequence chain.
-  /// Tail calls are not allowed.
-  assert(CallEnd->getOpcode() == ISD::CALLSEQ_END &&
-         "Expected a callseq node.");
-  SDNode *Call = CallEnd->getOperand(0).getNode();
+    /// Get a call instruction from the call sequence chain.
+    /// Tail calls are not allowed.
+    assert(CallEnd->getOpcode() == ISD::CALLSEQ_END &&
+           "Expected a callseq node.");
+    Call = CallEnd->getOperand(0).getNode();
+  } else {
+    Call = CLI.Chain.getNode();
+  }
   bool HasGlue = Call->getGluedNode();
 
   // Replace the target specific call node with the patchable intrinsic.
   SmallVector<SDValue, 8> Ops;
 
-  // Push the chain.
-  Ops.push_back(*(Call->op_begin()));
-
-  // Optionally, push the glue (if any).
-  if (HasGlue)
-    Ops.push_back(*(Call->op_end() - 1));
-
-  // Push the register mask info.
-  if (HasGlue)
-    Ops.push_back(*(Call->op_end() - 2));
-  else
-    Ops.push_back(*(Call->op_end() - 1));
-
   // Add the <id> and <numBytes> constants.
   SDValue IDVal = getValue(CB.getArgOperand(PatchPointOpers::IDPos));
-  Ops.push_back(DAG.getTargetConstant(IDVal->getAsZExtVal(), dl, MVT::i64));
+  SDValue IDConst = DAG.getTargetConstant(IDVal->getAsZExtVal(), dl, MVT::i64);
   SDValue NBytesVal = getValue(CB.getArgOperand(PatchPointOpers::NBytesPos));
-  Ops.push_back(DAG.getTargetConstant(NBytesVal->getAsZExtVal(), dl, MVT::i32));
-
-  // Add the callee.
-  Ops.push_back(Callee);
+  SDValue NBytesConst =
+      DAG.getTargetConstant(NBytesVal->getAsZExtVal(), dl, MVT::i32);
 
   // Adjust <numArgs> to account for any arguments that have been passed on the
   // stack instead.
-  // Call Node: Chain, Target, {Args}, RegMask, [Glue]
-  unsigned NumCallRegArgs = Call->getNumOperands() - (HasGlue ? 4 : 3);
+  // Call Node: Chain, Target, {Args}, [RegMask], [Glue]
+  unsigned NumCallRegArgs =
+      Call->getNumOperands() + (CLI.IsTailCall ? 1 : 0) - (HasGlue ? 4 : 3);
   NumCallRegArgs = IsAnyRegCC ? NumArgs : NumCallRegArgs;
-  Ops.push_back(DAG.getTargetConstant(NumCallRegArgs, dl, MVT::i32));
 
-  // Add the calling convention
-  Ops.push_back(DAG.getTargetConstant((unsigned)CC, dl, MVT::i32));
+  if (!CLI.IsTailCall) {
+    // Push the chain.
+    Ops.push_back(*(Call->op_begin()));
 
-  // Add the arguments we omitted previously. The register allocator should
-  // place these in any free register.
-  if (IsAnyRegCC)
-    for (unsigned i = NumMetaOpers, e = NumMetaOpers + NumArgs; i != e; ++i)
-      Ops.push_back(getValue(CB.getArgOperand(i)));
+    // Optionally, push the glue (if any).
+    if (HasGlue)
+      Ops.push_back(*(Call->op_end() - 1));
 
-  // Push the arguments from the call instruction.
-  SDNode::op_iterator e = HasGlue ? Call->op_end()-2 : Call->op_end()-1;
-  Ops.append(Call->op_begin() + 2, e);
+    // Push the register mask info.
+    if (HasGlue)
+      Ops.push_back(*(Call->op_end() - 2));
+    else
+      Ops.push_back(*(Call->op_end() - 1));
 
-  // Push live variables for the stack map.
-  addStackMapLiveVars(CB, NumMetaOpers + NumArgs, dl, Ops, *this);
+    Ops.push_back(IDConst);
+    Ops.push_back(NBytesConst);
+
+    // Add the callee.
+    Ops.push_back(Callee);
+
+    Ops.push_back(DAG.getTargetConstant(NumCallRegArgs, dl, MVT::i32));
+
+    // Add the calling convention
+    Ops.push_back(DAG.getTargetConstant((unsigned)CC, dl, MVT::i32));
+
+    // Add the arguments we omitted previously. The register allocator should
+    // place these in any free register.
+    if (IsAnyRegCC)
+      for (unsigned i = NumMetaOpers, e = NumMetaOpers + NumArgs; i != e; ++i)
+        Ops.push_back(getValue(CB.getArgOperand(i)));
+
+    // Push the arguments from the call instruction.
+    SDNode::op_iterator e = HasGlue ? Call->op_end()-2 : Call->op_end()-1;
+    Ops.append(Call->op_begin() + 2, e);
+
+    // Push live variables for the stack map.
+    addStackMapLiveVars(CB, NumMetaOpers + NumArgs, dl, Ops, *this);
+  } else {
+    // A patchpoint in tail call position is emitted directly as a
+    // TCPATCHPOINT machine node, so its operands are laid out in machine
+    // order (the chain and glue come last), mirroring how Select_PATCHPOINT
+    // lays out a PATCHPOINT machine node.
+    Ops.push_back(IDConst);
+    Ops.push_back(NBytesConst);
+
+    // Add the callee.
+    Ops.push_back(Callee);
+
+    Ops.push_back(DAG.getTargetConstant(NumCallRegArgs, dl, MVT::i32));
+
+    // Add the calling convention
+    Ops.push_back(DAG.getTargetConstant((unsigned)CC, dl, MVT::i32));
+
+    // Add the arguments we omitted previously. The register allocator should
+    // place these in any free register.
+    if (IsAnyRegCC)
+      for (unsigned i = NumMetaOpers, e = NumMetaOpers + NumArgs; i != e; ++i)
+        Ops.push_back(getValue(CB.getArgOperand(i)));
+
+    // Push the arguments from the call instruction up to the register mask.
+    SDNode::op_iterator e = HasGlue ? Call->op_end() - 2 : Call->op_end() - 1;
+    e += 1;
+    Ops.append(Call->op_begin() + 2, e);
+
+    // Push live variables for the stack map.
+    addStackMapLiveVars(CB, NumMetaOpers + NumArgs, dl, Ops, *this);
+
+    // Push the register mask info.
+    if (NumCallRegArgs) {
+      if (HasGlue)
+        Ops.push_back(*(Call->op_end() - 2));
+      else
+        Ops.push_back(*(Call->op_end() - 1));
+    }
+
+    // Push the chain (this is originally the first operand of the call, but
+    // becomes now the last or second to last operand).
+    Ops.push_back(*(Call->op_begin()));
+
+    // Push the glue flag (last operand).
+    if (HasGlue)
+      Ops.push_back(*(Call->op_end()-1));
+  }
 
   SDVTList NodeTys;
   if (IsAnyRegCC && HasDef) {
@@ -11316,7 +11412,12 @@ void SelectionDAGBuilder::visitPatchpoint(const CallBase &CB,
     NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
 
   // Replace the target specific call node with a PATCHPOINT node.
-  SDValue PPV = DAG.getNode(ISD::PATCHPOINT, dl, NodeTys, Ops);
+  SDValue PPV;
+  if (!CLI.IsTailCall)
+    PPV = DAG.getNode(ISD::PATCHPOINT, dl, NodeTys, Ops);
+  else
+    PPV = SDValue(
+        DAG.getMachineNode(TargetOpcode::TCPATCHPOINT, dl, NodeTys, Ops), 0);
 
   // Update the NodeMap.
   if (HasDef) {

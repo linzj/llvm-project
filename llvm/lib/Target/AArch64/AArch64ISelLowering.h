@@ -970,6 +970,12 @@ private:
   bool hasMultipleConditionRegisters(EVT VT) const override {
     return VT.isScalableVector();
   }
+
+  // Wraps TargetLoweringBase::emitPatchPoint to add an implicit LR def to
+  // the emitted pseudo, mirroring the clobber done by the call it may be
+  // expanded to.
+  MachineBasicBlock *emitPatchPoint(MachineInstr &MI,
+                                    MachineBasicBlock *MBB) const;
 };
 
 namespace AArch64 {

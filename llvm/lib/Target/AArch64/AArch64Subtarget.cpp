@@ -377,7 +377,7 @@ AArch64Subtarget::AArch64Subtarget(const Triple &TT, StringRef CPU,
       // and:
       //  https://github.com/llvm/llvm-project/pull/168353
       EnableSubregLiveness(IsStreaming || EnableSubregLivenessTracking),
-      TargetTriple(TT),
+      TargetTriple(TT), FrameLowering(TT),
       InstrInfo(initializeSubtargetDependencies(FS, CPU, TuneCPU, HasMinSize)),
       TLInfo(TM, *this) {
   if (AArch64::isX18ReservedByDefault(TT))

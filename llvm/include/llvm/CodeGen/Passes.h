@@ -539,6 +539,9 @@ LLVM_ABI FunctionPass *createRegUsageInfoCollector();
 /// if available with PysicalRegisterUsageInfo pass.
 LLVM_ABI FunctionPass *createRegUsageInfoPropPass();
 
+/// Lower state point related machine instructions, like RELOCATE_DEF.
+LLVM_ABI FunctionPass *createStatepointLoweringPass();
+
 /// This pass performs software pipelining on machine instructions.
 LLVM_ABI extern char &MachinePipelinerID;
 

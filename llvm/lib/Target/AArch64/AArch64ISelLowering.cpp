@@ -1271,7 +1271,10 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
   MaxLoadsPerMemcmp =
       Subtarget->requiresStrictAlign() ? MaxLoadsPerMemcmpOptSize : 8;
 
-  setStackPointerRegisterToSaveRestore(AArch64::SP);
+  if (TM.getTargetTriple().getEnvironment() == Triple::Dart)
+    setStackPointerRegisterToSaveRestore(AArch64::X15);
+  else
+    setStackPointerRegisterToSaveRestore(AArch64::SP);
 
   setSchedulingPreference(Sched::Hybrid);
 
@@ -3621,6 +3624,7 @@ MachineBasicBlock *AArch64TargetLowering::EmitInstrWithCustomInserter(
     [[fallthrough]];
   case TargetOpcode::STACKMAP:
   case TargetOpcode::PATCHPOINT:
+  case TargetOpcode::TCPATCHPOINT:
     return emitPatchPoint(MI, BB);
 
   case TargetOpcode::PATCHABLE_EVENT_CALL:
@@ -8998,6 +9002,8 @@ CCAssignFn *AArch64TargetLowering::CCAssignFnForCall(CallingConv::ID CC,
     return CC_AArch64_Arm64EC_Thunk;
   case CallingConv::ARM64EC_Thunk_Native:
     return CC_AArch64_Arm64EC_Thunk_Native;
+  case CallingConv::V8CC:
+    return CC_AArch64_V8;
   }
 }
 
@@ -9694,6 +9700,7 @@ static bool mayTailCallThisCC(CallingConv::ID CC) {
   case CallingConv::SwiftTail:
   case CallingConv::Tail:
   case CallingConv::Fast:
+  case CallingConv::V8CC:
     return true;
   default:
     return false;
@@ -9709,6 +9716,7 @@ static bool callConvSupportsVarArgs(CallingConv::ID CC) {
   switch (CC) {
   case CallingConv::C:
   case CallingConv::PreserveNone:
+  case CallingConv::V8CC:
   // SVE vector call is only partially supported, but it should
   // support named arguments being passed. Any arguments being passed
   // as varargs, are still unsupported.
@@ -10803,6 +10811,9 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Add a register mask operand representing the call-preserved registers.
   const uint32_t *Mask;
   const AArch64RegisterInfo *TRI = Subtarget->getRegisterInfo();
+  bool IsDartSharedStubCall = CLI.IsDartSharedStubCall;
+  bool IsDartCCall = CLI.IsDartCCall;
+
   if (IsThisReturn) {
     // For 'this' returns, use the X0-preserving mask if applicable
     Mask = TRI->getThisReturnPreservedMask(MF, CallConv);
@@ -10810,6 +10821,11 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
       IsThisReturn = false;
       Mask = TRI->getCallPreservedMask(MF, CallConv);
     }
+  }
+  if (IsDartSharedStubCall) {
+    Mask = TRI->getCallPreservedMask(MF, CallingConv::DartSharedStub);
+  } else if (IsDartCCall) {
+    Mask = TRI->getCallPreservedMask(MF, CallingConv::DartCCall);
   } else
     Mask = TRI->getCallPreservedMask(MF, CallConv);
 
@@ -32955,6 +32971,20 @@ void AArch64TargetLowering::finalizeLowering(MachineFunction &MF) const {
 
 // Unlike X86, we let frame lowering assign offsets to all catch objects.
 bool AArch64TargetLowering::needsFixedCatchObjects() const { return true; }
+
+MachineBasicBlock *
+AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
+                                      MachineBasicBlock *MBB) const {
+  MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
+  // These pseudo instructions may be expanded to a call, which clobbers LR.
+  // STATEPOINT already carries an implicit LR def added in
+  // EmitInstrWithCustomInserter; don't add a second one.
+  if (!MI.definesRegister(AArch64::LR, Subtarget->getRegisterInfo()))
+    MI.addOperand(*MI.getMF(), MachineOperand::CreateReg(AArch64::LR,
+                                                         /*isDef=*/true,
+                                                         /*isImp=*/true));
+  return MBB2;
+}
 
 bool AArch64TargetLowering::shouldLocalize(
     const MachineInstr &MI, const TargetTransformInfo *TTI) const {

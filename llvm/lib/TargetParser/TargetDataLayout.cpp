@@ -46,7 +46,8 @@ static std::string computeARMDataLayout(const Triple &TT, StringRef ABIName) {
   Ret += "-Fi8";
 
   // ABIs other than APCS have 64 bit integers with natural alignment.
-  if (ABI != ARM::ARM_ABI_APCS)
+  if (ABI != ARM::ARM_ABI_APCS && ABI != ARM::ARM_ABI_V8 &&
+      ABI != ARM::ARM_ABI_Dart)
     Ret += "-i64:64";
 
   // We have 64 bits floats. The APCS ABI requires them to be aligned to 32
@@ -56,7 +57,8 @@ static std::string computeARMDataLayout(const Triple &TT, StringRef ABIName) {
 
   // We have 128 and 64 bit vectors. The APCS ABI aligns them to 32 bits, others
   // to 64. We always ty to give them natural alignment.
-  if (ABI == ARM::ARM_ABI_APCS)
+  if (ABI == ARM::ARM_ABI_APCS || ABI == ARM::ARM_ABI_V8 ||
+      ABI == ARM::ARM_ABI_Dart)
     Ret += "-v64:32:64-v128:32:128";
   else if (ABI != ARM::ARM_ABI_AAPCS16)
     Ret += "-v128:64:128";

@@ -1685,6 +1685,10 @@ ARMTargetLowering::getEffectiveCallingConv(CallingConv::ID CC,
   switch (CC) {
   default:
     report_fatal_error("Unsupported calling convention");
+  case CallingConv::V8CC:
+    return CallingConv::V8CC;
+  case CallingConv::V8SBCC:
+    return CallingConv::V8SBCC;
   case CallingConv::ARM_AAPCS:
   case CallingConv::ARM_APCS:
   case CallingConv::GHC:
@@ -1740,6 +1744,10 @@ CCAssignFn *ARMTargetLowering::CCAssignFnForNode(CallingConv::ID CC,
   switch (getEffectiveCallingConv(CC, isVarArg)) {
   default:
     report_fatal_error("Unsupported calling convention");
+  case CallingConv::V8SBCC:
+    return (Return ? RetCC_ARM_V8SB : CC_ARM_V8SB);
+  case CallingConv::V8CC:
+    return (Return ? RetCC_ARM_V8 : CC_ARM_V8);
   case CallingConv::ARM_APCS:
     return (Return ? RetCC_ARM_APCS : CC_ARM_APCS);
   case CallingConv::ARM_AAPCS:
@@ -2031,6 +2039,10 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   bool isSibCall = false;
   bool PreferIndirect = false;
   bool GuardWithBTI = false;
+  bool hasJSCCall     = false;
+  CallingConv::ID CallerCC = MF.getFunction().getCallingConv();
+  bool CallerIsJS =
+      ((CallerCC == CallingConv::V8CC) || (CallerCC == CallingConv::V8SBCC));
 
   // Analyze operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
@@ -2076,7 +2088,7 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   }
   if (isTailCall) {
     // Check if it's really possible to do a tail call.
-    isTailCall =
+    isTailCall = CallerIsJS ||
         IsEligibleForTailCallOptimization(CLI, CCInfo, ArgLocs, PreferIndirect);
 
     if (isTailCall && !getTargetMachine().Options.GuaranteedTailCallOpt &&
@@ -2131,9 +2143,75 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     // Adjust the stack pointer for the new arguments...
     // These operations are automatically eliminated by the prolog/epilog pass
     Chain = DAG.getCALLSEQ_START(Chain, isTailCall ? 0 : NumBytes, 0, dl);
+    if (isa_and_nonnull<CallInst>(CB) && CallerIsJS &&
+        CLI.CallConv == CallingConv::C) {
+      hasJSCCall = true;
+    }
   }
 
-  SDValue StackPtr =
+  // Add a register mask operand representing the call-preserved registers.
+  bool IsCCallInsideJSSaveFP = false;
+  bool IsDartSharedStubCall = CLI.IsDartSharedStubCall;
+
+  if (CLI.IsDartCCall)
+    hasJSCCall = false;
+  if (CallerCC == CallingConv::V8SBCC && hasJSCCall)
+    IsCCallInsideJSSaveFP = CLI.IsJSSaveFP;
+
+  SDValue FPSaveArea0, FPSaveArea1, CCAL, CCR;
+  // Save the FP.
+  if (IsCCallInsideJSSaveFP) {
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    int FIFPSaveArea0, FIFPSaveArea1;
+    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+    FIFPSaveArea0 = AFI->getFIFPSaveArea0();
+    if (FIFPSaveArea0 == -1) {
+      FIFPSaveArea0 = MFI.CreateStackObject(8 * 16, Align(4), false);
+      FIFPSaveArea1 = MFI.CreateStackObject(8 * 8, Align(4), false);
+      AFI->setFIFPSaveArea0(FIFPSaveArea0);
+      AFI->setFIFPSaveArea1(FIFPSaveArea1);
+    }
+    FIFPSaveArea1 = AFI->getFIFPSaveArea1();
+    FPSaveArea0 =
+        DAG.getFrameIndex(FIFPSaveArea0, getFrameIndexTy(DAG.getDataLayout()));
+    FPSaveArea1 =
+        DAG.getFrameIndex(FIFPSaveArea1, getFrameIndexTy(DAG.getDataLayout()));
+    CCAL = DAG.getConstant(ARMCC::AL, dl, MVT::i32, true);
+    CCR = DAG.getRegister(0, MVT::i32);
+    std::vector<SDValue> Ops;
+    Ops.emplace_back(FPSaveArea0);
+    Ops.emplace_back(CCAL);
+    Ops.emplace_back(CCR);
+    for (int i = 16; i < 32; ++i)
+      Ops.emplace_back(DAG.getRegister(ARM::D0 + i, MVT::i64));
+    Ops.emplace_back(Chain);
+    Chain = SDValue(DAG.getMachineNode(ARM::VSTMDIA, dl, MVT::Other, Ops), 0);
+    Ops.clear();
+    Ops.emplace_back(FPSaveArea1);
+    Ops.emplace_back(CCAL);
+    Ops.emplace_back(CCR);
+    for (int i = 0; i < 8; ++i)
+      Ops.emplace_back(DAG.getRegister(ARM::D0 + i, MVT::i64));
+    Ops.emplace_back(Chain);
+    Chain = SDValue(DAG.getMachineNode(ARM::VSTMDIA, dl, MVT::Other, Ops), 0);
+  }
+  SDValue StackPtr;
+  if (hasJSCCall) {
+    SDValue OldStackPtr = DAG.getCopyFromReg(Chain, dl, ARM::SP,
+                                             getPointerTy(DAG.getDataLayout()));
+    Chain = OldStackPtr.getValue(1);
+    SDValue InFlag;
+    SDValue NewStackPtr = DAG.getNode(
+        ISD::AND, dl, OldStackPtr.getValueType(), OldStackPtr.getValue(0),
+        DAG.getConstant(-8, dl, OldStackPtr.getValueType()));
+    Chain =
+        DAG.getCopyToReg(Chain, dl, ARM::SP, NewStackPtr.getValue(0), InFlag);
+    MachineFunction &MF = DAG.getMachineFunction();
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    MFI.setFrameAddressIsTaken(true);
+  }
+
+  StackPtr =
       DAG.getCopyFromReg(Chain, dl, ARM::SP, getPointerTy(DAG.getDataLayout()));
 
   RegsToPassVector RegsToPass;
@@ -2620,6 +2698,10 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       isThisReturn = false;
       Mask = ARI->getCallPreservedMask(MF, CallConv);
     }
+  } else if (IsCCallInsideJSSaveFP) {
+    Mask = ARI->getCallPreservedMask(MF, CallingConv::V8FPSave);
+  } else if (IsDartSharedStubCall) {
+    Mask = ARI->getCallPreservedMask(MF, CallingConv::DartSharedStub);
   } else
     Mask = ARI->getCallPreservedMask(MF, CallConv);
 
@@ -2644,6 +2726,37 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   if (CLI.CFIType)
     Chain.getNode()->setCFIType(CLI.CFIType->getZExtValue());
   DAG.addNoMergeSiteInfo(Chain.getNode(), CLI.NoMerge);
+
+  if (hasJSCCall) {
+    Chain =
+        SDValue(DAG.getMachineNode(TargetOpcode::RESTORESP, dl,
+                                   DAG.getVTList(MVT::Other, MVT::Glue), Chain),
+                0);
+  }
+
+  // Restore the FP.
+  if (IsCCallInsideJSSaveFP) {
+    std::vector<SDValue> Ops;
+    Ops.emplace_back(FPSaveArea1);
+    Ops.emplace_back(CCAL);
+    Ops.emplace_back(CCR);
+    for (int i = 0; i < 8; ++i)
+      Ops.emplace_back(DAG.getRegister(ARM::D0 + i, MVT::i64));
+    Ops.emplace_back(Chain);
+    Chain = SDValue(DAG.getMachineNode(ARM::VLDMDIA, dl, MVT::Other, Ops), 0);
+    Ops.clear();
+    Ops.emplace_back(FPSaveArea0);
+    Ops.emplace_back(CCAL);
+    Ops.emplace_back(CCR);
+    for (int i = 16; i < 32; ++i)
+      Ops.emplace_back(DAG.getRegister(ARM::D0 + i, MVT::i64));
+    Ops.emplace_back(Chain);
+    Chain =
+        SDValue(DAG.getMachineNode(ARM::VLDMDIA, dl,
+                                   DAG.getVTList(MVT::Other, MVT::Glue), Ops),
+                0);
+  }
+
   InGlue = Chain.getValue(1);
   DAG.addCallSiteInfo(Chain.getNode(), std::move(CSInfo));
 
@@ -12031,6 +12144,17 @@ ARMTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     llvm_unreachable("Unexpected instr type to insert");
   }
 
+  case TargetOpcode::STATEPOINT:
+    // As an implementation detail, STATEPOINT shares the STACKMAP format at
+    // this point in the process.  We diverge later.
+    return emitPatchPoint(MI, BB);
+
+  case TargetOpcode::STACKMAP:
+  case TargetOpcode::PATCHPOINT:
+    return emitPatchPoint(MI, BB);
+  case TargetOpcode::TCPATCHPOINT:
+    return TargetLoweringBase::emitPatchPoint(MI, BB);
+
   // Thumb1 post-indexed loads are really just single-register LDMs.
   case ARM::tLDR_postidx: {
     MachineOperand Def(MI.getOperand(1));
@@ -14591,6 +14715,10 @@ static SDValue PerformORCombineToBFI(SDNode *N,
     return SDValue();
   unsigned Mask = MaskC->getZExtValue();
   if (Mask == 0xffff)
+    return SDValue();
+  // Memory Operator can address constant, save one register.
+  auto UI = dyn_cast<MemSDNode>(*(N->use_begin()));
+  if (UI)
     return SDValue();
   SDValue Res;
   // Case (1): or (and A, mask), val => ARMbfi A, val, mask
@@ -19536,6 +19664,23 @@ bool ARMTargetLowering::allowTruncateForTailCall(Type *Ty1, Type *Ty2) const {
   // Assuming the caller doesn't have a zeroext or signext return parameter,
   // truncation all the way down to i1 is valid.
   return true;
+}
+
+const MCPhysReg *
+ARMTargetLowering::getScratchRegisters(CallingConv::ID CC) const {
+  if (CC == CallingConv::V8SBCC)
+    return nullptr;
+  static const MCPhysReg ScratchRegs[] = {ARM::R12, 0};
+  return ScratchRegs;
+}
+
+MachineBasicBlock *
+ARMTargetLowering::emitPatchPoint(MachineInstr &MI,
+                                  MachineBasicBlock *MBB) const {
+  MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
+  MachineFunction &MF = *MI.getMF();
+  MI.addOperand(MF, MachineOperand::CreateReg(ARM::LR, true, true));
+  return MBB2;
 }
 
 /// isFMAFasterThanFMulAndFAdd - Return true if an FMA operation is faster

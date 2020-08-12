@@ -259,6 +259,8 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
     stackAlignment = Align(8);
   if (TM.isAAPCS16_ABI())
     stackAlignment = Align(16);
+  if (isV8_ABI() || isDart_ABI())
+    stackAlignment = Align(4);
 
   // FIXME: Completely disable sibcall for Thumb1 since ThumbRegisterInfo::
   // emitEpilogue is not ready for them. Thumb tail calls also use t2B, as
@@ -376,6 +378,15 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
     PartialUpdateClearance = 12;
     break;
   }
+}
+
+bool ARMSubtarget::isV8_ABI() const {
+  assert(TM.TargetABI != ARM::ARM_ABI_UNKNOWN);
+  return TM.TargetABI == ARM::ARM_ABI_V8;
+}
+bool ARMSubtarget::isDart_ABI() const {
+  assert(TM.TargetABI != ARM::ARM_ABI_UNKNOWN);
+  return TM.TargetABI == ARM::ARM_ABI_Dart;
 }
 
 bool ARMSubtarget::isROPI() const {

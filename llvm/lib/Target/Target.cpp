@@ -19,6 +19,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/TargetParser/Triple.h"
 #include <cstring>
 
 using namespace llvm;
@@ -57,6 +58,12 @@ void LLVMDisposeTargetData(LLVMTargetDataRef TD) {
 void LLVMAddTargetLibraryInfo(LLVMTargetLibraryInfoRef TLI,
                               LLVMPassManagerRef PM) {
   unwrap(PM)->add(new TargetLibraryInfoWrapperPass(*unwrap(TLI)));
+}
+
+LLVMTargetLibraryInfoRef LLVMCreateEmptyTargetLibraryInfo() {
+  TargetLibraryInfoImpl *TLII = new TargetLibraryInfoImpl(Triple());
+  TLII->disableAllFunctions();
+  return wrap(TLII);
 }
 
 char *LLVMCopyStringRepOfTargetData(LLVMTargetDataRef TD) {

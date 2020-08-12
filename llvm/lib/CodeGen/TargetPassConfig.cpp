@@ -1143,6 +1143,7 @@ void TargetPassConfig::addMachinePasses() {
   if (TM->Options.EnableIPRA)
     addPass(createRegUsageInfoPropPass());
 
+  addPass(createStatepointLoweringPass());
   // Run pre-ra passes.
   addPreRegAlloc();
 
@@ -1219,6 +1220,7 @@ void TargetPassConfig::addMachinePasses() {
   if (getOptLevel() != CodeGenOptLevel::None)
     addBlockPlacement();
 
+  addPass(&StackMapLivenessID);
   // Insert before XRay Instrumentation.
   addPass(&FEntryInserterID);
 
@@ -1237,7 +1239,6 @@ void TargetPassConfig::addMachinePasses() {
   addPass(&FuncletLayoutID);
 
   addPass(&RemoveLoadsIntoFakeUsesID);
-  addPass(&StackMapLivenessID);
   addPass(&LiveDebugValuesID);
   addPass(&MachineSanitizerBinaryMetadataID);
 

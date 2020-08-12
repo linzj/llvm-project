@@ -784,7 +784,7 @@ bool PeepholeOptimizer::optimizeExtInstr(
     MachineInstr &MI, MachineBasicBlock &MBB,
     SmallPtrSetImpl<MachineInstr *> &LocalMIs) {
   Register SrcReg, DstReg;
-  unsigned SubIdx;
+  unsigned SubIdx = 0;
   if (!TII->isCoalescableExtInstr(MI, SrcReg, DstReg, SubIdx))
     return false;
 

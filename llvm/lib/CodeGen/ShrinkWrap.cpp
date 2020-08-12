@@ -182,9 +182,13 @@ class ShrinkWrapImpl {
 
       TFI->determineCalleeSaves(*MachineFunc, SavedRegs, RS);
 
+      const TargetRegisterInfo *TRI =
+          MachineFunc->getSubtarget().getRegisterInfo();
       for (int Reg = SavedRegs.find_first(); Reg != -1;
-           Reg = SavedRegs.find_next(Reg))
-        CurrentCSRs.insert((unsigned)Reg);
+           Reg = SavedRegs.find_next(Reg)) {
+        for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
+          CurrentCSRs.insert(*AI);
+      }
     }
     return CurrentCSRs;
   }
@@ -334,6 +338,8 @@ bool ShrinkWrapImpl::useOrDefCSROrFI(const MachineInstr &MI, RegScavenger *RS,
   }
   const MachineFunction *MF = MI.getParent()->getParent();
   const TargetRegisterInfo *TRI = MF->getSubtarget().getRegisterInfo();
+  if (MI.isReturn())
+    return false;
   for (const MachineOperand &MO : MI.operands()) {
     bool UseOrDefCSR = false;
     if (MO.isReg()) {
@@ -357,7 +363,7 @@ bool ShrinkWrapImpl::useOrDefCSROrFI(const MachineInstr &MI, RegScavenger *RS,
       // register. Until the FP is assigned a Physical Register PPC's FP needs
       // to be checked separately.
       UseOrDefCSR = (!MI.isCall() && PhysReg == SP) ||
-                    RCI.getLastCalleeSavedAlias(PhysReg) ||
+                    getCurrentCSRs(RS).count(PhysReg) ||
                     (!MI.isReturn() &&
                      TRI->isNonallocatableRegisterCalleeSave(PhysReg)) ||
                     TRI->isVirtualFrameRegister(PhysReg);

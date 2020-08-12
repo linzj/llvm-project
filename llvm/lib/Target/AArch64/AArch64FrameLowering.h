@@ -14,6 +14,7 @@
 #define LLVM_LIB_TARGET_AARCH64_AARCH64FRAMELOWERING_H
 
 #include "llvm/CodeGen/MachineOptimizationRemarkEmitter.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
 #include "llvm/Support/TypeSize.h"
 
@@ -32,9 +33,10 @@ struct SVEStackSizes {
 
 class AArch64FrameLowering : public TargetFrameLowering {
 public:
-  explicit AArch64FrameLowering()
-      : TargetFrameLowering(StackGrowsDown, Align(16), 0, Align(16),
-                            true /*StackRealignable*/) {}
+  explicit AArch64FrameLowering(const Triple &TargetTriple)
+      : TargetFrameLowering(
+            StackGrowsDown, Align(SelectStackAlign(TargetTriple)), 0,
+            Align(SelectStackAlign(TargetTriple)), true /*StackRealignable*/) {}
 
   void resetCFIToInitialState(MachineBasicBlock &MBB) const override;
 
@@ -267,6 +269,14 @@ private:
   unsigned getFixedObjectSize(const MachineFunction &MF,
                               const AArch64FunctionInfo *AFI, bool IsWin64,
                               bool IsFunclet) const;
+
+  // Dart kernels run with an 8-byte stack alignment; everything else uses
+  // the AAPCS-mandated 16-byte alignment.
+  static unsigned SelectStackAlign(const Triple &TargetTriple) {
+    if (TargetTriple.getEnvironment() == Triple::Dart)
+      return 8;
+    return 16;
+  }
 };
 
 } // End llvm namespace

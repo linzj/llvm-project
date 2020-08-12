@@ -160,6 +160,8 @@ public:
                       LiveIntervals &LIS) const override;
 
   int getSEHRegNum(unsigned i) const { return getEncodingValue(i); }
+
+  VirtRegToFixSlotMap getHoistToFixStackSlotMap(MachineFunction &) const final;
 };
 
 } // end namespace llvm

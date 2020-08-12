@@ -149,6 +149,8 @@ public:
 
 private:
   void seedLiveRegs();
+  void tryHoistToStackSlot();
+  void removeV8StatepointRegs();
 };
 
 } // end namespace llvm

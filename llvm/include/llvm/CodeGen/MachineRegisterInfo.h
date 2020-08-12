@@ -1043,6 +1043,10 @@ public:
   /// corresponding live-in virtual register.
   LLVM_ABI Register getLiveInVirtReg(MCRegister PReg) const;
 
+  /// updateVirtRegIfLivein - If a VReg is a live-in virtual register, update
+  /// it to VNewReg.
+  void updateVirtRegIfLivein(unsigned VReg, unsigned VNewReg);
+
   /// EmitLiveInCopies - Emit copies to initialize livein virtual registers
   /// into the given entry block.
   LLVM_ABI void EmitLiveInCopies(MachineBasicBlock *EntryMBB,

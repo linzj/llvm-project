@@ -572,6 +572,7 @@ TargetInstrInfo::getPatchpointUnfoldableRange(const MachineInstr &MI) const {
   case TargetOpcode::STACKMAP:
     // StackMapLiveValues are foldable
     return std::make_pair(0, StackMapOpers(&MI).getVarIdx());
+  case TargetOpcode::TCPATCHPOINT:
   case TargetOpcode::PATCHPOINT:
     // For PatchPoint, the call args are not foldable (even if reported in the
     // stackmap e.g. via anyregcc).
@@ -757,6 +758,7 @@ MachineInstr *TargetInstrInfo::foldMemoryOperand(MachineInstr &MI,
 
   if (MI.getOpcode() == TargetOpcode::STACKMAP ||
       MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+      MI.getOpcode() == TargetOpcode::TCPATCHPOINT ||
       MI.getOpcode() == TargetOpcode::STATEPOINT) {
     // Fold stackmap/patchpoint.
     NewMI = foldPatchpoint(MF, MI, Ops, FI, *this);
@@ -834,6 +836,7 @@ TargetInstrInfo::foldMemoryOperand(MachineInstr &MI, ArrayRef<unsigned> Ops,
   int FrameIndex = 0;
 
   if ((MI.getOpcode() == TargetOpcode::STACKMAP ||
+       MI.getOpcode() == TargetOpcode::TCPATCHPOINT ||
        MI.getOpcode() == TargetOpcode::PATCHPOINT ||
        MI.getOpcode() == TargetOpcode::STATEPOINT) &&
       isLoadFromStackSlot(LoadMI, FrameIndex)) {

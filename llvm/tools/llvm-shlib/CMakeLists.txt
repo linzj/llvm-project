@@ -90,6 +90,7 @@ if(LLVM_BUILD_LLVM_DYLIB)
   endif()
 
   target_link_libraries(LLVM PRIVATE ${LIB_NAMES})
+  set_target_properties(LLVM PROPERTIES LINK_FLAGS "-static-libstdc++")
 
   if(LLVM_ENABLE_THREADS AND NOT HAVE_CXX_ATOMICS64_WITHOUT_LIB)
     target_link_libraries(LLVM PUBLIC atomic)

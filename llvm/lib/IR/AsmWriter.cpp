@@ -352,6 +352,12 @@ static void printCallingConv(unsigned cc, raw_ostream &Out) {
   case CallingConv::Fast:          Out << "fastcc"; break;
   case CallingConv::Cold:          Out << "coldcc"; break;
   case CallingConv::AnyReg:        Out << "anyregcc"; break;
+  case CallingConv::V8CC:
+    Out << "v8cc";
+    break;
+  case CallingConv::V8SBCC:
+    Out << "v8sbcc";
+    break;
   case CallingConv::PreserveMost:  Out << "preserve_mostcc"; break;
   case CallingConv::PreserveAll:   Out << "preserve_allcc"; break;
   case CallingConv::PreserveNone:  Out << "preserve_nonecc"; break;

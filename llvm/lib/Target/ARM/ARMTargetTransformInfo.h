@@ -62,6 +62,7 @@ class ARMTTIImpl final : public BasicTTIImplBase<ARMTTIImpl> {
 
   const ARMSubtarget *ST;
   const ARMTargetLowering *TLI;
+  const Function *Fn;
 
   const ARMSubtarget *getST() const { return ST; }
   const ARMTargetLowering *getTLI() const { return TLI; }
@@ -69,7 +70,7 @@ class ARMTTIImpl final : public BasicTTIImplBase<ARMTTIImpl> {
 public:
   explicit ARMTTIImpl(const ARMBaseTargetMachine *TM, const Function &F)
       : BaseT(TM, F.getDataLayout()), ST(TM->getSubtargetImpl(F)),
-        TLI(ST->getTargetLowering()) {}
+        TLI(ST->getTargetLowering()), Fn(&F) {}
 
   bool enableInterleavedAccessVectorization() const override { return true; }
 
@@ -313,6 +314,8 @@ public:
   void getPeelingPreferences(Loop *L, ScalarEvolution &SE,
                              TTI::PeelingPreferences &PP) const override;
   bool shouldBuildLookupTablesForConstant(Constant *C) const override {
+    if (Fn->getCallingConv() == CallingConv::V8CC)
+      return false;
     // In the ROPI and RWPI relocation models we can't have pointers to global
     // variables or functions in constant data, so don't convert switches to
     // lookup tables if any of the values would need relocation.

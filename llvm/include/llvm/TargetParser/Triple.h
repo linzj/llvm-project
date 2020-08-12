@@ -412,7 +412,9 @@ public:
 
     PAuthTest,
     MTIA,
-    LastEnvironmentType = MTIA
+    V8,
+    Dart,
+    LastEnvironmentType = Dart
   };
   enum ObjectFormatType {
     UnknownObjectFormat,

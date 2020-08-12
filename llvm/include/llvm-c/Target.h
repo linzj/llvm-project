@@ -209,6 +209,9 @@ LLVM_C_ABI void LLVMDisposeTargetData(LLVMTargetDataRef TD);
 LLVM_C_ABI void LLVMAddTargetLibraryInfo(LLVMTargetLibraryInfoRef TLI,
                                          LLVMPassManagerRef PM);
 
+/** Create empty TargetLibraryInfoImpl, with all functions disabled */
+LLVMTargetLibraryInfoRef LLVMCreateEmptyTargetLibraryInfo();
+
 /** Converts target data to a target layout string. The string must be disposed
     with LLVMDisposeMessage.
     See the constructor llvm::DataLayout::DataLayout. */

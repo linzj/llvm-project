@@ -465,6 +465,13 @@ InstructionCost ARMTTIImpl::getIntImmCostInst(unsigned Opcode, unsigned Idx,
                       getIntImmCost(Imm + 1, Ty, CostKind));
   }
 
+  if ((Opcode == Instruction::GetElementPtr) &&
+      (!ST->isThumb() || ST->isThumb2())) {
+    int64_t SImmVal = Imm.getSExtValue();
+    if (SImmVal < 4096 && SImmVal > -4096)
+      return 0;
+  }
+
   return getIntImmCost(Imm, Ty, CostKind);
 }
 

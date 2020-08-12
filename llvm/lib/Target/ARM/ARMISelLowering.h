@@ -349,6 +349,11 @@ class VectorType;
         Type *Ty, CallingConv::ID CallConv, bool isVarArg,
         const DataLayout &DL) const override;
 
+    const MCPhysReg *getScratchRegisters(CallingConv::ID CC) const override;
+
+    MachineBasicBlock *emitPatchPoint(MachineInstr &MI,
+                                      MachineBasicBlock *MBB) const;
+
     /// If a physical register, this returns the register that receives the
     /// exception address on entry to an EH pad.
     Register

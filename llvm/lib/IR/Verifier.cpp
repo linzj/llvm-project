@@ -2929,7 +2929,9 @@ void Verifier::verifyStatepoint(const CallBase &Call) {
     Check(UserCall, "illegal use of statepoint token", Call, U);
     if (!UserCall)
       continue;
-    Check(isa<GCRelocateInst>(UserCall) || isa<GCResultInst>(UserCall),
+    Check(isa<GCRelocateInst>(UserCall) || isa<GCResultInst>(UserCall) ||
+              isa<GCExceptionInst>(UserCall) ||
+              isa<GCExceptionDataInst>(UserCall),
           "gc.result or gc.relocate are the only value uses "
           "of a gc.statepoint",
           Call, U);
@@ -2939,6 +2941,13 @@ void Verifier::verifyStatepoint(const CallBase &Call) {
     } else if (isa<GCRelocateInst>(Call)) {
       Check(UserCall->getArgOperand(0) == &Call,
             "gc.relocate connected to wrong gc.statepoint", Call, UserCall);
+    } else if (isa<GCExceptionInst>(UserCall)) {
+      Check(UserCall->getArgOperand(0) == &Call,
+            "gc.exception connected to wrong gc.statepoint", Call, UserCall);
+    } else if (isa<GCExceptionDataInst>(UserCall)) {
+      Check(UserCall->getArgOperand(0) == &Call,
+            "gc.exception_data connected to wrong gc.statepoint", Call,
+            UserCall);
     }
   }
 

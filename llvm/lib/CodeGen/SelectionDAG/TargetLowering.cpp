@@ -106,6 +106,9 @@ bool TargetLowering::parametersInCSRMatch(const MachineRegisterInfo &MRI,
     SDValue Value = OutVals[I];
     if (Value->getOpcode() == ISD::AssertZext)
       Value = Value.getOperand(0);
+    // Ignore the undefined input.
+    if (Value->getOpcode() == ISD::UNDEF)
+      continue;
     if (Value->getOpcode() != ISD::CopyFromReg)
       return false;
     Register ArgReg = cast<RegisterSDNode>(Value->getOperand(1))->getReg();

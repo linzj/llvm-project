@@ -48,6 +48,7 @@ public:
       bool UseFlattenedProfile = false);
 
   LLVM_ABI PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+  LLVM_ABI static std::string SampleProfileFileFromOption();
 
 private:
   std::string ProfileFileName;

@@ -377,8 +377,8 @@ private:
                             LocationVec &Locations, LiveOutVec &LiveOuts);
 
   /// Create a live-out register record for the given register @p Reg.
-  LiveOutReg createLiveOutReg(unsigned Reg,
-                              const TargetRegisterInfo *TRI) const;
+  void createLiveOutReg(unsigned Reg, const TargetRegisterInfo *TRI,
+                        LiveOutVec &LiveOuts) const;
 
   /// Parse the register live-out mask and return a vector of live-out
   /// registers that need to be recorded in the stackmap.
@@ -390,9 +390,9 @@ private:
   /// STACKMAP, and PATCHPOINT the label is expected to immediately *preceed*
   /// lowering of the MI to MCInsts.  For STATEPOINT, it expected to
   /// immediately *follow*.  It's not clear this difference was intentional,
-  /// but it exists today.  
-  void recordStackMapOpers(const MCSymbol &L,
-                           const MachineInstr &MI, uint64_t ID,
+  /// but it exists today.
+  void recordStackMapOpers(const MCSymbol &L, const MachineInstr &MI,
+                           uint64_t ID, const MachineOperand *Callee,
                            MachineInstr::const_mop_iterator MOI,
                            MachineInstr::const_mop_iterator MOE,
                            bool recordResult = false);

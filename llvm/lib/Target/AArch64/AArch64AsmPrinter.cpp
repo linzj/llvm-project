@@ -1803,7 +1803,10 @@ void AArch64AsmPrinter::LowerPATCHPOINT(MCStreamer &OutStreamer, StackMaps &SM,
 
   PatchPointOpers Opers(&MI);
 
-  int64_t CallTarget = Opers.getCallTarget().getImm();
+  const MachineOperand &CallTargetOperand = Opers.getCallTarget();
+  int64_t CallTarget = 0;
+  if (CallTargetOperand.isImm())
+    CallTarget = CallTargetOperand.getImm();
   unsigned EncodedBytes = 0;
   if (CallTarget) {
     assert((CallTarget & 0xFFFFFFFFFFFF) == CallTarget &&
@@ -3701,6 +3704,7 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
   case TargetOpcode::STACKMAP:
     return LowerSTACKMAP(*OutStreamer, SM, *MI);
 
+  case TargetOpcode::TCPATCHPOINT:
   case TargetOpcode::PATCHPOINT:
     return LowerPATCHPOINT(*OutStreamer, SM, *MI);
 

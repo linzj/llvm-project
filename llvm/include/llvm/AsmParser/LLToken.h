@@ -162,6 +162,8 @@ enum Kind {
   kw_x86_64_sysvcc,
   kw_win64cc,
   kw_anyregcc,
+  kw_v8cc,
+  kw_v8sbcc,
   kw_swiftcc,
   kw_swifttailcc,
   kw_preserve_mostcc,

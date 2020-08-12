@@ -657,11 +657,14 @@ lowerStatepointMetaArgs(SmallVectorImpl<SDValue> &Ops,
                                  Builder);
   }
 
-  // Finally, go ahead and lower all the gc arguments.
+  // Finally, go ahead and lower all the gc arguments.  For the V8 calling
+  // convention, all gc pointers are live-in values and are never forced into
+  // spill slots.
+  bool ForceLiveIn = SI.CLI.CallConv == CallingConv::V8CC;
   pushStackMapConstant(Ops, Builder, LoweredGCPtrs.size());
   for (SDValue SDV : LoweredGCPtrs)
-    lowerIncomingStatepointValue(SDV, !LowerAsVReg.count(SDV), Ops, MemRefs,
-                                 Builder);
+    lowerIncomingStatepointValue(
+        SDV, !ForceLiveIn && !LowerAsVReg.count(SDV), Ops, MemRefs, Builder);
 
   // Copy to out vector. LoweredGCPtrs will be empty after this point.
   GCPtrs = LoweredGCPtrs.takeVector();
@@ -1210,6 +1213,42 @@ void SelectionDAGBuilder::visitGCResult(const GCResultInst &CI) {
   setValue(&CI, CopyFromReg);
 }
 
+void SelectionDAGBuilder::visitGCException(const GCExceptionInst &CI) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  const Constant *PersonalityFn = FuncInfo.Fn->getPersonalityFn();
+  if (TLI.getExceptionPointerRegister(PersonalityFn) == 0 &&
+      TLI.getExceptionSelectorRegister(PersonalityFn) == 0)
+    return;
+  assert(FuncInfo.MBB->isEHPad() && "Call to landingpad not in landing pad!");
+  SDValue Op;
+  SDLoc dl = getCurSDLoc();
+  Type *RetTy = CI.getFunctionType()->getReturnType();
+  Op = DAG.getZExtOrTrunc(
+      DAG.getCopyFromReg(DAG.getEntryNode(), dl,
+                         FuncInfo.ExceptionPointerVirtReg,
+                         TLI.getPointerTy(DAG.getDataLayout())),
+      dl, TLI.getValueType(DAG.getDataLayout(), RetTy));
+  setValue(&CI, Op);
+}
+
+void SelectionDAGBuilder::visitGCExceptionData(const GCExceptionDataInst &CI) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  const Constant *PersonalityFn = FuncInfo.Fn->getPersonalityFn();
+  if (TLI.getExceptionPointerRegister(PersonalityFn) == 0 &&
+      TLI.getExceptionSelectorRegister(PersonalityFn) == 0)
+    return;
+  assert(FuncInfo.MBB->isEHPad() && "Call to landingpad not in landing pad!");
+  SDValue Op;
+  SDLoc dl = getCurSDLoc();
+  Type *RetTy = CI.getFunctionType()->getReturnType();
+  Op = DAG.getZExtOrTrunc(
+      DAG.getCopyFromReg(DAG.getEntryNode(), dl,
+                         FuncInfo.ExceptionSelectorVirtReg,
+                         TLI.getPointerTy(DAG.getDataLayout())),
+      dl, TLI.getValueType(DAG.getDataLayout(), RetTy));
+  setValue(&CI, Op);
+}
+
 void SelectionDAGBuilder::visitGCRelocate(const GCRelocateInst &Relocate) {
   const Value *Statepoint = Relocate.getStatepoint();
 #ifndef NDEBUG
@@ -1302,7 +1341,16 @@ void SelectionDAGBuilder::visitGCRelocate(const GCRelocateInst &Relocate) {
 
   // We didn't need to spill these special cases (constants and allocas).
   // See the handling in spillIncomingValueForStatepoint for detail.
-  setValue(&Relocate, SD);
+  // Wrap the value in a RELOCATE_DEF machine node, which causes the value to
+  // be split in MIR by the StatepointLowering machine pass.
+  SDVTList NodeTys = DAG.getVTList(SD.getValueType());
+
+  SmallVector<SDValue, 1> Ops;
+  Ops.emplace_back(SD);
+  MachineSDNode *RelocateMCNode = DAG.getMachineNode(
+      TargetOpcode::RELOCATE_DEF, getCurSDLoc(), NodeTys, Ops);
+
+  setValue(&Relocate, SDValue(RelocateMCNode, 0));
 }
 
 void SelectionDAGBuilder::LowerDeoptimizeCall(const CallInst *CI) {

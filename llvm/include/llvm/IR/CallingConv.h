@@ -297,6 +297,21 @@ namespace CallingConv {
     /// stateless compartment.
     CHERIoT_LibraryCall = 127,
 
+    /// Calling convention for v8.
+    V8CC = 128,
+
+    /// Calling convention for v8 store barrier stub.
+    V8SBCC = 129,
+
+    /// Calling convention for v8 C call with fp saved.
+    V8FPSave = 130,
+
+    /// For dart shared stubs.
+    DartSharedStub = 131,
+
+    /// For dart C calls.
+    DartCCall = 132,
+
     /// The highest possible ID. Must be some 2^k - 1.
     MaxID = 1023
   };

@@ -480,12 +480,19 @@ Register MachineRegisterInfo::getLiveInVirtReg(MCRegister PReg) const {
   return Register();
 }
 
+void MachineRegisterInfo::updateVirtRegIfLivein(unsigned VReg,
+                                                unsigned VNewReg) {
+  for (auto I = LiveIns.begin(), E = LiveIns.end(); I != E; ++I)
+    if (I->second == VReg) {
+      I->second = VNewReg;
+    }
+}
+
 /// EmitLiveInCopies - Emit copies to initialize livein virtual registers
 /// into the given entry block.
-void
-MachineRegisterInfo::EmitLiveInCopies(MachineBasicBlock *EntryMBB,
-                                      const TargetRegisterInfo &TRI,
-                                      const TargetInstrInfo &TII) {
+void MachineRegisterInfo::EmitLiveInCopies(MachineBasicBlock *EntryMBB,
+                                           const TargetRegisterInfo &TRI,
+                                           const TargetInstrInfo &TII) {
   // Emit the copies into the top of the block.
   for (unsigned i = 0, e = LiveIns.size(); i != e; ++i)
     if (LiveIns[i].second) {

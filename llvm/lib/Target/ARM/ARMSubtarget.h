@@ -374,6 +374,9 @@ public:
 
   bool isXRaySupported() const override;
 
+  bool isV8_ABI() const;
+  bool isDart_ABI() const;
+
   bool isROPI() const;
   bool isRWPI() const;
 

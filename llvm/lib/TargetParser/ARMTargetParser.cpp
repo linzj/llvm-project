@@ -566,6 +566,10 @@ StringRef ARM::computeDefaultTargetABI(const Triple &TT) {
   case Triple::EABIHF:
   case Triple::EABI:
     return "aapcs";
+  case Triple::V8:
+    return "v8";
+  case Triple::Dart:
+    return "dart";
   default:
     if (TT.isOSNetBSD())
       return "apcs-gnu";
@@ -588,6 +592,12 @@ ARM::ARMABI ARM::computeTargetABI(const Triple &TT, StringRef ABIName) {
 
   if (ABIName.starts_with("apcs"))
     return ARM_ABI_APCS;
+
+  if (ABIName == "v8")
+    return ARM_ABI_V8;
+
+  if (ABIName == "dart")
+    return ARM_ABI_Dart;
 
   return ARM_ABI_UNKNOWN;
 }
