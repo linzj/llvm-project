@@ -30,6 +30,8 @@ public:
   /// the function.
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
+  void emitJSPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const;
+  void emitJSEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const;
 
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
@@ -70,6 +72,11 @@ public:
     // many registers with a single PUSH/POP pair.
     return false;
   }
+
+  bool
+  assignCalleeSavedSpillSlots(MachineFunction &MF,
+                              const TargetRegisterInfo *TRI,
+                              std::vector<CalleeSavedInfo> &CSI) const override;
 
 private:
   void emitPushInst(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,

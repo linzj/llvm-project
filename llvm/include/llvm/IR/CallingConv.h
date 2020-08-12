@@ -230,16 +230,28 @@ namespace CallingConv {
     /// shader if tessellation is in use, or otherwise the vertex shader.
     AMDGPU_ES = 96,
 
+    // Calling convention for v8.
+    V8CC = 97,
+
+    // Calling convention for v8 store barrier stub.
+    V8SBCC = 98,
+    // Calling convention for v8 C call with fp saved.
+    V8FPSave = 99,
+    // For dart shared stubs.
+    DartSharedStub = 100,
+    // For dart C calls.
+    DartCCall = 101,
+
     // Calling convention between AArch64 Advanced SIMD functions
-    AArch64_VectorCall = 97,
+    AArch64_VectorCall = 103,
 
     /// Calling convention between AArch64 SVE functions
-    AArch64_SVE_VectorCall = 98,
+    AArch64_SVE_VectorCall = 104,
 
     /// Calling convention for emscripten __invoke_* functions. The first
     /// argument is required to be the function ptr being indirectly called.
     /// The remainder matches the regular calling convention.
-    WASM_EmscriptenInvoke = 99,
+    WASM_EmscriptenInvoke = 105,
 
     /// The highest possible calling convention ID. Must be some 2^k - 1.
     MaxID = 1023

@@ -1881,6 +1881,10 @@ CCAssignFn *ARMFastISel::CCAssignFnForCall(CallingConv::ID CC,
       return CC_ARM_APCS_GHC;
   case CallingConv::CFGuard_Check:
     return (Return ? RetCC_ARM_AAPCS : CC_ARM_Win32_CFGuard_Check);
+  case CallingConv::V8CC:
+    return (Return ? RetCC_ARM_V8 : CC_ARM_V8);
+  case CallingConv::V8SBCC:
+    return (Return ? RetCC_ARM_V8SB : CC_ARM_V8SB);
   }
 }
 

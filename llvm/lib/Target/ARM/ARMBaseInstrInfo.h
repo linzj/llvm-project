@@ -400,6 +400,8 @@ private:
   virtual void expandLoadStackGuard(MachineBasicBlock::iterator MI) const = 0;
 
   void expandMEMCPY(MachineBasicBlock::iterator) const;
+  void expandRESTORESP(MachineBasicBlock::iterator) const;
+  int getSPAdjust(const MachineInstr &MI) const final override;
 
   /// Identify instructions that can be folded into a MOVCC instruction, and
   /// return the defining instruction.

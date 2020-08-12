@@ -170,9 +170,13 @@ class ShrinkWrap : public MachineFunctionPass {
 
       TFI->determineCalleeSaves(*MachineFunc, SavedRegs, RS);
 
+      const TargetRegisterInfo *TRI =
+          MachineFunc->getSubtarget().getRegisterInfo();
       for (int Reg = SavedRegs.find_first(); Reg != -1;
-           Reg = SavedRegs.find_next(Reg))
-        CurrentCSRs.insert((unsigned)Reg);
+           Reg = SavedRegs.find_next(Reg)) {
+        for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
+          CurrentCSRs.insert(*AI);
+      }
     }
     return CurrentCSRs;
   }
@@ -273,6 +277,8 @@ bool ShrinkWrap::useOrDefCSROrFI(const MachineInstr &MI,
     LLVM_DEBUG(dbgs() << "Frame instruction: " << MI << '\n');
     return true;
   }
+  if (MI.isReturn())
+    return false;
   for (const MachineOperand &MO : MI.operands()) {
     bool UseOrDefCSR = false;
     if (MO.isReg()) {
@@ -288,8 +294,8 @@ bool ShrinkWrap::useOrDefCSROrFI(const MachineInstr &MI,
       // separately. An SP mentioned by a call instruction, we can ignore,
       // though, as it's harmless and we do not want to effectively disable tail
       // calls by forcing the restore point to post-dominate them.
-      UseOrDefCSR = (!MI.isCall() && PhysReg == SP) ||
-                    RCI.getLastCalleeSavedAlias(PhysReg);
+      UseOrDefCSR =
+          (!MI.isCall() && PhysReg == SP) || getCurrentCSRs(RS).count(PhysReg);
     } else if (MO.isRegMask()) {
       // Check if this regmask clobbers any of the CSRs.
       for (unsigned Reg : getCurrentCSRs(RS)) {

@@ -780,6 +780,8 @@ private:
   // These two are implemented in StatepointLowering.cpp
   void visitGCRelocate(const GCRelocateInst &Relocate);
   void visitGCResult(const GCResultInst &I);
+  void visitGCException(const GCExceptionInst &I);
+  void visitGCExceptionData(const GCExceptionDataInst &I);
 
   void visitVectorReduce(const CallInst &I, unsigned Intrinsic);
 

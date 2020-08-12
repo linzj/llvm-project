@@ -154,6 +154,8 @@ enum Kind {
   kw_win64cc,
   kw_webkit_jscc,
   kw_anyregcc,
+  kw_v8cc,
+  kw_v8sbcc,
   kw_swiftcc,
   kw_preserve_mostcc,
   kw_preserve_allcc,

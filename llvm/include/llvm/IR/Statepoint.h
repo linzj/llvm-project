@@ -317,7 +317,9 @@ class GCProjectionInst : public IntrinsicInst {
 public:
   static bool classof(const IntrinsicInst *I) {
     return I->getIntrinsicID() == Intrinsic::experimental_gc_relocate ||
-      I->getIntrinsicID() == Intrinsic::experimental_gc_result;
+           I->getIntrinsicID() == Intrinsic::experimental_gc_result ||
+           I->getIntrinsicID() == Intrinsic::experimental_gc_exception ||
+           I->getIntrinsicID() == Intrinsic::experimental_gc_exception_data;
   }
 
   static bool classof(const Value *V) {
@@ -394,6 +396,28 @@ class GCResultInst : public GCProjectionInst {
 public:
   static bool classof(const IntrinsicInst *I) {
     return I->getIntrinsicID() == Intrinsic::experimental_gc_result;
+  }
+
+  static bool classof(const Value *V) {
+    return isa<IntrinsicInst>(V) && classof(cast<IntrinsicInst>(V));
+  }
+};
+
+class GCExceptionInst : public GCProjectionInst {
+public:
+  static bool classof(const IntrinsicInst *I) {
+    return I->getIntrinsicID() == Intrinsic::experimental_gc_exception;
+  }
+
+  static bool classof(const Value *V) {
+    return isa<IntrinsicInst>(V) && classof(cast<IntrinsicInst>(V));
+  }
+};
+
+class GCExceptionDataInst : public GCProjectionInst {
+public:
+  static bool classof(const IntrinsicInst *I) {
+    return I->getIntrinsicID() == Intrinsic::experimental_gc_exception_data;
   }
 
   static bool classof(const Value *V) {

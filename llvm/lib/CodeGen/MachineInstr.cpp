@@ -1318,14 +1318,22 @@ bool MachineInstr::isDereferenceableInvariantLoad(AAResults *AA) const {
 
   const MachineFrameInfo &MFI = getParent()->getParent()->getFrameInfo();
 
+  bool IsJSFunction = false;
+  CallingConv::ID CC = getParent()->getParent()->getFunction().getCallingConv();
+  if (CC == CallingConv::V8CC || CC == CallingConv::V8SBCC)
+    IsJSFunction = true;
+
   for (MachineMemOperand *MMO : memoperands()) {
     if (!MMO->isUnordered())
       // If the memory operand has ordering side effects, we can't move the
       // instruction.  Such an instruction is technically an invariant load,
       // but the caller code would need updated to expect that.
       return false;
-    if (MMO->isStore()) return false;
+    if (MMO->isStore())
+      return false;
     if (MMO->isInvariant() && MMO->isDereferenceable())
+      continue;
+    if (IsJSFunction && MMO->isInvariant())
       continue;
 
     // A load from a constant PseudoSourceValue is invariant.

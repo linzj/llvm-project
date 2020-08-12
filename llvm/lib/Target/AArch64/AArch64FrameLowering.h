@@ -14,15 +14,17 @@
 #define LLVM_LIB_TARGET_AARCH64_AARCH64FRAMELOWERING_H
 
 #include "AArch64StackOffset.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
 
 namespace llvm {
 
 class AArch64FrameLowering : public TargetFrameLowering {
 public:
-  explicit AArch64FrameLowering()
-      : TargetFrameLowering(StackGrowsDown, Align(16), 0, Align(16),
-                            true /*StackRealignable*/) {}
+  explicit AArch64FrameLowering(const Triple &TargetTriple)
+      : TargetFrameLowering(
+            StackGrowsDown, Align(SelectStackAlign(TargetTriple)), 0,
+            Align(SelectStackAlign(TargetTriple)), true /*StackRealignable*/) {}
 
   void emitCalleeSavedFrameMoves(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MBBI) const;
@@ -107,6 +109,11 @@ private:
   int64_t assignSVEStackObjectOffsets(MachineFrameInfo &MF,
                                       int &MinCSFrameIndex,
                                       int &MaxCSFrameIndex) const;
+  inline unsigned SelectStackAlign(const Triple &TargetTriple) {
+    if (TargetTriple.getEnvironment() == Triple::Dart)
+      return 8;
+    return 16;
+  }
 };
 
 } // End llvm namespace

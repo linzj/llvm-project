@@ -814,7 +814,8 @@ EmitMachineNode(SDNode *Node, bool IsClone, bool IsCloned,
   const MCPhysReg *ScratchRegs = nullptr;
 
   // Handle STACKMAP and PATCHPOINT specially and then use the generic code.
-  if (Opc == TargetOpcode::STACKMAP || Opc == TargetOpcode::PATCHPOINT) {
+  if (Opc == TargetOpcode::STACKMAP || Opc == TargetOpcode::PATCHPOINT ||
+      Opc == TargetOpcode::TCPATCHPOINT) {
     // Stackmaps do not have arguments and do not preserve their calling
     // convention. However, to simplify runtime support, they clobber the same
     // scratch registers as AnyRegCC.

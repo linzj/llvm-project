@@ -481,6 +481,11 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
     // from bits 11:4 of X
     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 4, 11));
     break;
+  case ELF::R_AARCH64_ADR_PREL_LO21:
+  case ELF::R_AARCH64_LD_PREL_LO19: {
+    or32le(TargetPtr, 0);
+    break;
+  }
   }
 }
 
@@ -1934,8 +1939,10 @@ bool RuntimeDyldELF::relocationNeedsGot(const RelocationRef &R) const {
 }
 
 bool RuntimeDyldELF::relocationNeedsStub(const RelocationRef &R) const {
+  if (Arch == Triple::aarch64 || Arch == Triple::aarch64_be)
+    return false;
   if (Arch != Triple::x86_64)
-    return true;  // Conservative answer
+    return true; // Conservative answer
 
   switch (R.getType()) {
   default:

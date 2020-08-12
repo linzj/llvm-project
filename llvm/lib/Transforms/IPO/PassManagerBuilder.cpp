@@ -35,6 +35,7 @@
 #include "llvm/Transforms/IPO/ForceFunctionAttrs.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
+#include "llvm/Transforms/IPO/SampleProfile.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Scalar.h"
@@ -297,6 +298,8 @@ void PassManagerBuilder::populateFunctionPassManager(
 // Do PGO instrumentation generation or use pass as the option specified.
 void PassManagerBuilder::addPGOInstrPasses(legacy::PassManagerBase &MPM,
                                            bool IsCS = false) {
+  if (PGOSampleUse.empty())
+    PGOSampleUse = SampleProfileLoaderPass::SampleProfileFileFromOption();
   if (IsCS) {
     if (!EnablePGOCSInstrGen && !EnablePGOCSInstrUse)
       return;
@@ -469,6 +472,8 @@ void PassManagerBuilder::populateModulePassManager(
     legacy::PassManagerBase &MPM) {
   // Whether this is a default or *LTO pre-link pipeline. The FullLTO post-link
   // is handled separately, so just check this is not the ThinLTO post-link.
+  if (PGOSampleUse.empty())
+    PGOSampleUse = SampleProfileLoaderPass::SampleProfileFileFromOption();
   bool DefaultOrPreLinkPipeline = !PerformThinLTO;
 
   if (!PGOSampleUse.empty()) {
@@ -837,6 +842,8 @@ void PassManagerBuilder::populateModulePassManager(
 }
 
 void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
+  if (PGOSampleUse.empty())
+    PGOSampleUse = SampleProfileLoaderPass::SampleProfileFileFromOption();
   // Load sample profile before running the LTO optimization pipeline.
   if (!PGOSampleUse.empty()) {
     PM.add(createPruneEHPass());

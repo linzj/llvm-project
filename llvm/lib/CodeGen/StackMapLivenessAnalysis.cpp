@@ -132,7 +132,8 @@ bool StackMapLiveness::calculateLiveness(MachineFunction &MF) {
     // Reverse iterate over all instructions and add the current live register
     // set to an instruction if we encounter a patchpoint instruction.
     for (auto I = MBB.rbegin(), E = MBB.rend(); I != E; ++I) {
-      if (I->getOpcode() == TargetOpcode::PATCHPOINT) {
+      if (I->getOpcode() == TargetOpcode::PATCHPOINT ||
+          I->getOpcode() == TargetOpcode::STATEPOINT) {
         addLiveOutSetToMI(MF, *I);
         HasChanged = true;
         HasStackMap = true;

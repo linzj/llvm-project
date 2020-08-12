@@ -107,6 +107,10 @@ unsigned AArch64InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     NumBytes = PatchPointOpers(&MI).getNumPatchBytes();
     assert(NumBytes % 4 == 0 && "Invalid number of NOP bytes requested!");
     break;
+  case TargetOpcode::STATEPOINT:
+    NumBytes = StatepointOpers(&MI).getNumPatchBytes();
+    assert(NumBytes % 4 == 0 && "Invalid number of NOP bytes requested!");
+    break;
   case AArch64::TLSDESC_CALLSEQ:
     // This gets lowered to an instruction sequence which takes 16 bytes
     NumBytes = 16;
@@ -3206,8 +3210,10 @@ void llvm::emitFrameOffset(MachineBasicBlock &MBB,
 
   // First emit non-scalable frame offsets, or a simple 'mov'.
   if (Bytes || (!Offset && SrcReg != DestReg)) {
-    assert((DestReg != AArch64::SP || Bytes % 16 == 0) &&
-           "SP increment/decrement not 16-byte aligned");
+    assert((MBB.getParent()->getTarget().getTargetTriple().getEnvironment() ==
+            Triple::Dart) ||
+           (DestReg != AArch64::SP || Bytes % 16 == 0) &&
+               "SP increment/decrement not 16-byte aligned");
     unsigned Opc = SetNZCV ? AArch64::ADDSXri : AArch64::ADDXri;
     if (Bytes < 0) {
       Bytes = -Bytes;

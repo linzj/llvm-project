@@ -55,7 +55,7 @@ using namespace llvm;
 ARMAsmPrinter::ARMAsmPrinter(TargetMachine &TM,
                              std::unique_ptr<MCStreamer> Streamer)
     : AsmPrinter(TM, std::move(Streamer)), Subtarget(nullptr), AFI(nullptr),
-      MCP(nullptr), InConstantPool(false), OptimizationGoals(-1) {}
+      MCP(nullptr), InConstantPool(false), OptimizationGoals(-1), SM(*this) {}
 
 void ARMAsmPrinter::EmitFunctionBodyEnd() {
   // Make sure to terminate any constant pools that were at the end
@@ -548,6 +548,7 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
       OutStreamer->AddBlankLine();
     }
 
+    SM.serializeToStackMapSection();
     // Funny Darwin hack: This flag tells the linker that no global symbols
     // contain code that falls through to other global symbols (e.g. the obvious
     // implementation of multiple entry points).  If this doesn't occur, the
@@ -567,6 +568,15 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
   OptimizationGoals = -1;
 
   ATS.finishAttributeSection();
+  if (TT.isOSBinFormatCOFF()) {
+    SM.serializeToStackMapSection();
+    return;
+  }
+
+  if (TT.isOSBinFormatELF()) {
+    SM.serializeToStackMapSection();
+    return;
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -2135,12 +2145,132 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case ARM::PATCHABLE_TAIL_CALL:
     LowerPATCHABLE_TAIL_CALL(*MI);
     return;
+  case TargetOpcode::STACKMAP:
+    return LowerSTACKMAP(*OutStreamer, SM, *MI);
+  case TargetOpcode::PATCHPOINT:
+  case TargetOpcode::TCPATCHPOINT:
+    return LowerPATCHPOINT(*OutStreamer, SM, *MI);
+  case TargetOpcode::STATEPOINT:
+    return LowerSTATEPOINT(*OutStreamer, SM, *MI);
   }
 
   MCInst TmpInst;
   LowerARMMachineInstrToMCInst(MI, TmpInst, *this);
 
   EmitToStreamer(*OutStreamer, TmpInst);
+}
+
+static unsigned roundUpTo4ByteAligned(unsigned n) {
+  unsigned mask = 3;
+  unsigned rev = ~3;
+  n = (n & rev) + (((n & mask) + mask) & rev);
+  return n;
+}
+
+void ARMAsmPrinter::LowerSTACKMAP(MCStreamer &OutStreamer, StackMaps &SM,
+                                  const MachineInstr &MI) {
+  assert(!AFI->isThumbFunction());
+  unsigned NumNOPBytes =
+      roundUpTo4ByteAligned(StackMapOpers(&MI).getNumPatchBytes());
+  auto &Ctx = OutStreamer.getContext();
+  MCSymbol *MILabel = Ctx.createTempSymbol();
+  OutStreamer.EmitLabel(MILabel);
+
+  SM.recordStackMap(*MILabel, MI);
+  assert(NumNOPBytes % 4 == 0 && "Invalid number of NOP bytes requested!");
+
+  // Scan ahead to trim the shadow.
+  const MachineBasicBlock &MBB = *MI.getParent();
+  MachineBasicBlock::const_iterator MII(MI);
+  ++MII;
+  while (NumNOPBytes > 0) {
+    if (MII == MBB.end() || MII->isCall() ||
+        MII->getOpcode() == ARM::DBG_VALUE ||
+        MII->getOpcode() == TargetOpcode::PATCHPOINT ||
+        MII->getOpcode() == TargetOpcode::TCPATCHPOINT ||
+        MII->getOpcode() == TargetOpcode::STACKMAP)
+      break;
+    ++MII;
+    NumNOPBytes -= 4;
+  }
+
+  // Emit nops.
+  MCInst Noop;
+  Subtarget->getInstrInfo()->getNoop(Noop);
+  for (unsigned i = 0; i < NumNOPBytes; i += 4)
+    EmitToStreamer(OutStreamer, Noop);
+}
+
+// Lower a patchpoint of the form:
+// [<def>], <id>, <numBytes>, <target>, <numArgs>
+void ARMAsmPrinter::LowerPATCHPOINT(MCStreamer &OutStreamer, StackMaps &SM,
+                                    const MachineInstr &MI) {
+  assert(!AFI->isThumbFunction());
+  auto &Ctx = OutStreamer.getContext();
+  MCSymbol *MILabel = Ctx.createTempSymbol();
+  OutStreamer.EmitLabel(MILabel);
+  SM.recordPatchPoint(*MILabel, MI);
+
+  PatchPointOpers Opers(&MI);
+
+  const MachineOperand &CallTargetOperand = Opers.getCallTarget();
+  int64_t CallTarget = 0;
+  if (CallTargetOperand.isImm())
+    CallTarget = CallTargetOperand.getImm();
+  unsigned EncodedBytes = 0;
+  if (CallTarget) {
+    assert((CallTarget & 0xFFFFFFFFLL) == CallTarget &&
+           "High 32 bits of call target should be zero.");
+    unsigned ScratchReg = MI.getOperand(Opers.getNextScratchIdx()).getReg();
+    EncodedBytes = 16;
+    EmitToStreamer(OutStreamer, MCInstBuilder(ARM::MOVTi16)
+                                    .addReg(ScratchReg)
+                                    .addReg(ScratchReg)
+                                    .addImm((CallTarget >> 16) & 0xFFFF)
+                                    .addImm(ARMCC::AL)
+                                    .addImm(0));
+    EmitToStreamer(OutStreamer, MCInstBuilder(ARM::MOVi16)
+                                    .addReg(ScratchReg)
+                                    .addImm(CallTarget & 0xFFFF)
+                                    .addImm(ARMCC::AL)
+                                    .addImm(0));
+    EmitToStreamer(OutStreamer, MCInstBuilder(ARM::BLX).addReg(ScratchReg));
+  }
+  // Emit padding.
+  unsigned NumBytes = roundUpTo4ByteAligned(Opers.getNumPatchBytes());
+  assert(NumBytes >= EncodedBytes &&
+         "Patchpoint can't request size less than the length of a call.");
+  assert((NumBytes - EncodedBytes) % 4 == 0 &&
+         "Invalid number of NOP bytes requested!");
+  MCInst Noop;
+  Subtarget->getInstrInfo()->getNoop(Noop);
+  for (unsigned i = EncodedBytes; i < NumBytes; i += 4)
+    EmitToStreamer(OutStreamer, Noop);
+}
+
+void ARMAsmPrinter::LowerSTATEPOINT(MCStreamer &OutStreamer, StackMaps &SM,
+                                    const MachineInstr &MI) {
+  assert(!AFI->isThumbFunction());
+  auto &Ctx = OutStreamer.getContext();
+  MCSymbol *MILabel = Ctx.createTempSymbol();
+  OutStreamer.EmitLabel(MILabel);
+  SM.recordStatepoint(*MILabel, MI);
+
+  StatepointOpers SOpers(&MI);
+  MCInst Noop;
+  Subtarget->getInstrInfo()->getNoop(Noop);
+  if (unsigned PatchBytes = SOpers.getNumPatchBytes()) {
+    unsigned NumBytes = roundUpTo4ByteAligned(PatchBytes);
+    unsigned EncodedBytes = 0;
+    assert(NumBytes >= EncodedBytes &&
+           "Patchpoint can't request size less than the length of a call.");
+    assert((NumBytes - EncodedBytes) % 4 == 0 &&
+           "Invalid number of NOP bytes requested!");
+    MCInst Noop;
+    Subtarget->getInstrInfo()->getNoop(Noop);
+    for (unsigned i = EncodedBytes; i < NumBytes; i += 4)
+      EmitToStreamer(OutStreamer, Noop);
+  }
 }
 
 //===----------------------------------------------------------------------===//

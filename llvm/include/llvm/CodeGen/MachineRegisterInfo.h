@@ -949,6 +949,10 @@ public:
   /// corresponding live-in physical register.
   unsigned getLiveInVirtReg(unsigned PReg) const;
 
+  /// updateVirtRegIfLivein - If a VReg is a live-in virtual register, update
+  /// it to VNewReg.
+  void updateVirtRegIfLivein(unsigned VReg, unsigned VNewReg);
+
   /// EmitLiveInCopies - Emit copies to initialize livein virtual registers
   /// into the given entry block.
   void EmitLiveInCopies(MachineBasicBlock *EntryMBB,

@@ -89,6 +89,7 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   /// areas.
   unsigned GPRCS1Size = 0;
   unsigned GPRCS2Size = 0;
+  unsigned GPRCS3Size = 0;
   unsigned DPRCSAlignGapSize = 0;
   unsigned DPRCSSize = 0;
 
@@ -131,9 +132,16 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   /// The amount the literal pool has been increasedby due to promoted globals.
   int PromotedGlobalsIncrease = 0;
 
+  mutable int LastSPAdjust = 0;
+  int FIFPSaveArea0 = -1;
+  int FIFPSaveArea1 = -1;
+  bool IsJSFunction = false;
   /// True if r0 will be preserved by a call to this function (e.g. C++
   /// con/destructors).
   bool PreservesR0 = false;
+
+  bool IsJSStub = false;
+  bool IsWASM = false;
 
 public:
   ARMFunctionInfo() = default;
@@ -181,11 +189,13 @@ public:
 
   unsigned getGPRCalleeSavedArea1Size() const { return GPRCS1Size; }
   unsigned getGPRCalleeSavedArea2Size() const { return GPRCS2Size; }
+  unsigned getGPRCalleeSavedArea3Size() const { return GPRCS3Size; }
   unsigned getDPRCalleeSavedGapSize() const   { return DPRCSAlignGapSize; }
   unsigned getDPRCalleeSavedAreaSize()  const { return DPRCSSize; }
 
   void setGPRCalleeSavedArea1Size(unsigned s) { GPRCS1Size = s; }
   void setGPRCalleeSavedArea2Size(unsigned s) { GPRCS2Size = s; }
+  void setGPRCalleeSavedArea3Size(unsigned s) { GPRCS3Size = s; }
   void setDPRCalleeSavedGapSize(unsigned s)   { DPRCSAlignGapSize = s; }
   void setDPRCalleeSavedAreaSize(unsigned s)  { DPRCSSize = s; }
 
@@ -250,11 +260,30 @@ public:
   void setPromotedConstpoolIncrease(int Sz) {
     PromotedGlobalsIncrease = Sz;
   }
+  bool isJSFunction() const { return IsJSFunction; }
+  bool isJSStub() const { return IsJSStub; }
+  bool isWASM() const { return IsWASM; }
+
+  void setJSFunction(bool s) { IsJSFunction = s; }
 
   DenseMap<unsigned, unsigned> EHPrologueRemappedRegs;
 
   void setPreservesR0() { PreservesR0 = true; }
   bool getPreservesR0() const { return PreservesR0; }
+  void setJSStub(bool s) { IsJSStub = s; }
+  void setWASM(bool s) { IsWASM = s; }
+
+  void pushLastSPAdjust(int n) const { LastSPAdjust = n; }
+  int popLastSPAdjust() const {
+    int r = LastSPAdjust;
+    LastSPAdjust = 0;
+    return r;
+  }
+  int getFIFPSaveArea0() const { return FIFPSaveArea0; }
+  int getFIFPSaveArea1() const { return FIFPSaveArea1; }
+
+  void setFIFPSaveArea0(int a) { FIFPSaveArea0 = a; }
+  void setFIFPSaveArea1(int a) { FIFPSaveArea1 = a; }
 };
 
 } // end namespace llvm

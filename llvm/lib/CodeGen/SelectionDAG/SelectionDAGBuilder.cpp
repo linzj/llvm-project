@@ -6745,6 +6745,12 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
   case Intrinsic::experimental_gc_relocate:
     visitGCRelocate(cast<GCRelocateInst>(I));
     return;
+  case Intrinsic::experimental_gc_exception:
+    visitGCException(cast<GCExceptionInst>(I));
+    return;
+  case Intrinsic::experimental_gc_exception_data:
+    visitGCExceptionData(cast<GCExceptionDataInst>(I));
+    return;
   case Intrinsic::instrprof_increment:
     llvm_unreachable("instrprof failed to lower an increment");
   case Intrinsic::instrprof_value_profile:
@@ -8695,7 +8701,10 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setChain(getRoot())
       .setCallee(Call->getCallingConv(), ReturnTy, Callee, std::move(Args))
       .setDiscardResult(Call->use_empty())
-      .setIsPatchPoint(IsPatchPoint);
+      .setIsPatchPoint(IsPatchPoint)
+      .setDartCCall(Call->hasFnAttr("dart-c-call"))
+      .setJSSaveFP(Call->hasFnAttr("save-fp"))
+      .setDartSharedStubCall(Call->hasFnAttr("dart-shared-stub-call"));
 }
 
 /// Add a stack map intrinsic call's live variable operands to a stackmap
@@ -8797,6 +8806,32 @@ void SelectionDAGBuilder::visitStackmap(const CallInst &CI) {
   FuncInfo.MF->getFrameInfo().setHasStackMap();
 }
 
+static bool isPatchpointInTailCallPosition(ImmutableCallSite CS) {
+  const Instruction *I = CS.getInstruction();
+  const BasicBlock *ExitBB = I->getParent();
+  const Instruction *Term = ExitBB->getTerminator();
+  const ReturnInst *Ret = dyn_cast<ReturnInst>(Term);
+  // If Term is not a ReturnInst, then it must be a UnreachableInst.
+  if (!Ret && !isa<UnreachableInst>(Term))
+    return false;
+  // Copy from isInTailCallPosition.
+  // If I will have a chain, make sure no other instruction that will have a
+  // chain interposes between I and the return.
+  if (I->mayHaveSideEffects() || I->mayReadFromMemory() ||
+      !isSafeToSpeculativelyExecute(I))
+    for (BasicBlock::const_iterator BBI = std::prev(ExitBB->end(), 2);; --BBI) {
+      if (&*BBI == I)
+        break;
+      // Debug info intrinsics do not get in the way of tail call optimization.
+      if (isa<DbgInfoIntrinsic>(BBI))
+        continue;
+      if (BBI->mayHaveSideEffects() || BBI->mayReadFromMemory() ||
+          !isSafeToSpeculativelyExecute(&*BBI))
+        return false;
+    }
+  return true;
+}
+
 /// Lower llvm.experimental.patchpoint directly to its target opcode.
 void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
                                           const BasicBlock *EHPadBB) {
@@ -8840,17 +8875,25 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
   TargetLowering::CallLoweringInfo CLI(DAG);
   populateCallLoweringInfo(CLI, cast<CallBase>(CS.getInstruction()),
                            NumMetaOpers, NumCallArgs, Callee, ReturnTy, true);
+  CLI.IsTailCall = isPatchpointInTailCallPosition(CS);
+  assert((!CLI.IsTailCall || !HasDef) &&
+         "TailCall should not has a return type");
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
+  SDNode *Call;
+  assert(CLI.IsTailCall || !HasTailCall);
+  if (!CLI.IsTailCall) {
+    SDNode *CallEnd = Result.second.getNode();
+    if (HasDef && (CallEnd->getOpcode() == ISD::CopyFromReg))
+      CallEnd = CallEnd->getOperand(0).getNode();
 
-  SDNode *CallEnd = Result.second.getNode();
-  if (HasDef && (CallEnd->getOpcode() == ISD::CopyFromReg))
-    CallEnd = CallEnd->getOperand(0).getNode();
-
-  /// Get a call instruction from the call sequence chain.
-  /// Tail calls are not allowed.
-  assert(CallEnd->getOpcode() == ISD::CALLSEQ_END &&
-         "Expected a callseq node.");
-  SDNode *Call = CallEnd->getOperand(0).getNode();
+    /// Get a call instruction from the call sequence chain.
+    /// Tail calls are not allowed.
+    assert(CallEnd->getOpcode() == ISD::CALLSEQ_END &&
+           "Expected a callseq node.");
+    Call = CallEnd->getOperand(0).getNode();
+  } else {
+    Call = CLI.Chain.getNode();
+  }
   bool HasGlue = Call->getGluedNode();
 
   // Replace the target specific call node with the patchable intrinsic.
@@ -8870,8 +8913,9 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
 
   // Adjust <numArgs> to account for any arguments that have been passed on the
   // stack instead.
-  // Call Node: Chain, Target, {Args}, RegMask, [Glue]
-  unsigned NumCallRegArgs = Call->getNumOperands() - (HasGlue ? 4 : 3);
+  // Call Node: Chain, Target, {Args}, [RegMask], [Glue]
+  unsigned NumCallRegArgs =
+      Call->getNumOperands() + (CLI.IsTailCall ? 1 : 0) - (HasGlue ? 4 : 3);
   NumCallRegArgs = IsAnyRegCC ? NumArgs : NumCallRegArgs;
   Ops.push_back(DAG.getTargetConstant(NumCallRegArgs, dl, MVT::i32));
 
@@ -8885,17 +8929,21 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
       Ops.push_back(getValue(CS.getArgument(i)));
 
   // Push the arguments from the call instruction up to the register mask.
-  SDNode::op_iterator e = HasGlue ? Call->op_end()-2 : Call->op_end()-1;
+  SDNode::op_iterator e = HasGlue ? Call->op_end() - 2 : Call->op_end() - 1;
+  if (CLI.IsTailCall)
+    e += 1;
   Ops.append(Call->op_begin() + 2, e);
 
   // Push live variables for the stack map.
   addStackMapLiveVars(CS, NumMetaOpers + NumArgs, dl, Ops, *this);
 
   // Push the register mask info.
-  if (HasGlue)
-    Ops.push_back(*(Call->op_end()-2));
-  else
-    Ops.push_back(*(Call->op_end()-1));
+  if (NumCallRegArgs) {
+    if (HasGlue)
+      Ops.push_back(*(Call->op_end() - 2));
+    else
+      Ops.push_back(*(Call->op_end() - 1));
+  }
 
   // Push the chain (this is originally the first operand of the call, but
   // becomes now the last or second to last operand).
@@ -8921,8 +8969,9 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
     NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
 
   // Replace the target specific call node with a PATCHPOINT node.
-  MachineSDNode *MN = DAG.getMachineNode(TargetOpcode::PATCHPOINT,
-                                         dl, NodeTys, Ops);
+  MachineSDNode *MN = DAG.getMachineNode(
+      CLI.IsTailCall ? TargetOpcode::TCPATCHPOINT : TargetOpcode::PATCHPOINT,
+      dl, NodeTys, Ops);
 
   // Update the NodeMap.
   if (HasDef) {

@@ -1983,3 +1983,7 @@ PreservedAnalyses SampleProfileLoaderPass::run(Module &M,
 
   return PreservedAnalyses::none();
 }
+
+std::string SampleProfileLoaderPass::SampleProfileFileFromOption() {
+  return SampleProfileFile;
+}

@@ -249,6 +249,7 @@ namespace {
     CPEntry *findConstPoolEntry(unsigned CPI, const MachineInstr *CPEMI);
     Align getCPEAlign(const MachineInstr *CPEMI);
     void scanFunctionJumpTables();
+    bool replaceInlineAsm();
     void initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs);
     MachineBasicBlock *splitBlockBeforeInstr(MachineInstr *MI);
     void updateForInsertedWaterBlock(MachineBasicBlock *NewBB);
@@ -372,7 +373,7 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
 
   // Try to reorder and otherwise adjust the block layout to make good use
   // of the TB[BH] instructions.
-  bool MadeChange = false;
+  bool MadeChange = replaceInlineAsm();
   if (GenerateTBB && AdjustJumpTableBlocks) {
     scanFunctionJumpTables();
     MadeChange |= reorderThumb2JumpTables();
@@ -681,6 +682,49 @@ void ARMConstantIslands::scanFunctionJumpTables() {
           (I.getOpcode() == ARM::t2BR_JT || I.getOpcode() == ARM::tBR_JTr))
         T2JumpTables.push_back(&I);
   }
+}
+
+bool ARMConstantIslands::replaceInlineAsm() {
+  bool MadeChange = false;
+  std::vector<MachineInstr *> toRemove;
+  for (MachineBasicBlock &MBB : *MF) {
+    for (MachineInstr &MI : MBB) {
+      if (MI.getOpcode() == TargetOpcode::INLINEASM) {
+        // handle const pool load
+        if (!strcmp(MI.getOperand(0).getSymbolName(), "ldr $0, =${1:c}")) {
+          MachineFunction *MF = MBB.getParent();
+          MachineConstantPool *ConstantPool = MF->getConstantPool();
+          Type *Int32Ty = Type::getInt32Ty(MF->getFunction().getContext());
+          const Constant *C =
+              ConstantInt::get(Int32Ty, MI.getOperand(5).getImm());
+
+          // MachineConstantPool wants an explicit alignment.
+          unsigned Align = MF->getDataLayout().getPrefTypeAlignment(Int32Ty);
+          if (Align == 0)
+            Align = MF->getDataLayout().getTypeAllocSize(C->getType());
+          unsigned Idx = ConstantPool->getConstantPoolIndex(C, Align);
+
+          if (isThumb)
+            BuildMI(MBB, MI, MI.getDebugLoc(), TII->get(ARM::tLDRpci))
+                .addReg(MI.getOperand(3).getReg(), RegState::Define)
+                .addConstantPoolIndex(Idx)
+                .add(predOps(ARMCC::AL));
+          else
+            BuildMI(MBB, MI, MI.getDebugLoc(), TII->get(ARM::LDRcp))
+                .addReg(MI.getOperand(3).getReg(), RegState::Define)
+                .addConstantPoolIndex(Idx)
+                .addImm(0)
+                .add(predOps(ARMCC::AL));
+          toRemove.push_back(&MI);
+          MadeChange = true;
+        }
+      }
+    }
+  }
+  for (MachineInstr *MI : toRemove) {
+    MI->eraseFromParent();
+  }
+  return MadeChange;
 }
 
 /// initializeFunctionInfo - Do the initial scan of the function, building up

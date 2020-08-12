@@ -609,6 +609,8 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(webkit_jscc);
   KEYWORD(swiftcc);
   KEYWORD(anyregcc);
+  KEYWORD(v8cc);
+  KEYWORD(v8sbcc);
   KEYWORD(preserve_mostcc);
   KEYWORD(preserve_allcc);
   KEYWORD(ghccc);

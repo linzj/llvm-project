@@ -556,8 +556,11 @@ void ScheduleDAGSDNodes::RegDefIter::InitNodeNumDefs() {
     NodeNumDefs = 0;
     return;
   }
-  if (POpc == TargetOpcode::PATCHPOINT &&
-      Node->getValueType(0) == MVT::Other) {
+  if (POpc == TargetOpcode::TCPATCHPOINT) {
+    NodeNumDefs = 0;
+    return;
+  }
+  if (POpc == TargetOpcode::PATCHPOINT && Node->getValueType(0) == MVT::Other) {
     // PATCHPOINT is defined to have one result, but it might really have none
     // if we're not using CallingConv::AnyReg. Don't mistake the chain for a
     // real definition.

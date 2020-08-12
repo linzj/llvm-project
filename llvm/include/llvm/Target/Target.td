@@ -1133,6 +1133,17 @@ def PATCHPOINT : StandardPseudoInstruction {
   let mayLoad = 1;
   let usesCustomInserter = 1;
 }
+def TCPATCHPOINT : StandardPseudoInstruction {
+  let OutOperandList = (outs);
+  let InOperandList = (ins i64imm:$id, i32imm:$nbytes, unknown:$callee,
+                       i32imm:$nargs, i32imm:$cc, variable_ops);
+  let hasSideEffects = 1;
+  let isCall = 1;
+  let mayLoad = 1;
+  let usesCustomInserter = 1;
+  let isReturn = 1;
+  let isTerminator = 1;
+}
 def STATEPOINT : StandardPseudoInstruction {
   let OutOperandList = (outs);
   let InOperandList = (ins variable_ops);
@@ -1141,6 +1152,20 @@ def STATEPOINT : StandardPseudoInstruction {
   let mayStore = 1;
   let hasSideEffects = 1;
   let isCall = 1;
+}
+def RELOCATE_DEF: StandardPseudoInstruction {
+  let OutOperandList = (outs unknown:$dst);
+  let InOperandList = (ins unknown:$src);
+  let AsmString = "";
+  let hasSideEffects = 0;
+  let isAsCheapAsAMove = 1;
+}
+def RESTORESP: StandardPseudoInstruction {
+  let OutOperandList = (outs);
+  let InOperandList = (ins);
+  let AsmString = "";
+  let hasSideEffects = 0;
+  let mayLoad = 1;
 }
 def LOAD_STACK_GUARD : StandardPseudoInstruction {
   let OutOperandList = (outs ptr_rc:$dst);

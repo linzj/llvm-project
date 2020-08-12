@@ -3456,6 +3456,9 @@ public:
     bool IsReturnValueUsed : 1;
     bool IsConvergent      : 1;
     bool IsPatchPoint      : 1;
+    bool IsDartCCall       : 1;
+    bool IsJSSaveFP        : 1;
+    bool IsDartSharedStubCall : 1;
 
     // IsTailCall should be modified by implementations of
     // TargetLowering::LowerCall that perform tail call conversions.
@@ -3479,7 +3482,8 @@ public:
     CallLoweringInfo(SelectionDAG &DAG)
         : RetSExt(false), RetZExt(false), IsVarArg(false), IsInReg(false),
           DoesNotReturn(false), IsReturnValueUsed(true), IsConvergent(false),
-          IsPatchPoint(false), DAG(DAG) {}
+          IsPatchPoint(false), IsDartCCall(false), IsJSSaveFP(false),
+          IsDartSharedStubCall(false), DAG(DAG) {}
 
     CallLoweringInfo &setDebugLoc(const SDLoc &dl) {
       DL = dl;
@@ -3588,6 +3592,21 @@ public:
 
     CallLoweringInfo &setIsPostTypeLegalization(bool Value=true) {
       IsPostTypeLegalization = Value;
+      return *this;
+    }
+
+    CallLoweringInfo &setDartCCall(bool Value = true) {
+      IsDartCCall = Value;
+      return *this;
+    }
+
+    CallLoweringInfo &setJSSaveFP(bool Value = true) {
+      IsJSSaveFP = Value;
+      return *this;
+    }
+
+    CallLoweringInfo &setDartSharedStubCall(bool Value = true) {
+      IsDartSharedStubCall = Value;
       return *this;
     }
 

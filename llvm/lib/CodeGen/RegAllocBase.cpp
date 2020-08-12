@@ -21,6 +21,7 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/Pass.h"
@@ -30,6 +31,7 @@
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
+#include <unordered_map>
 
 using namespace llvm;
 
@@ -169,4 +171,68 @@ void RegAllocBase::postOptimization() {
     DeadInst->eraseFromParent();
   }
   DeadRemats.clear();
+  tryHoistToStackSlot();
+}
+
+void RegAllocBase::tryHoistToStackSlot() {
+  MachineFunction &MF = VRM->getMachineFunction();
+  auto RegMapping = TRI->getHoistToFixStackSlotMap(MF);
+  if (RegMapping.empty())
+    return;
+  std::unordered_map<int, int> SlotMapping;
+  for (auto &Entry : RegMapping) {
+    int Slot = VRM->getStackSlot(Entry.first);
+    if (Slot == VirtRegMap::NO_STACK_SLOT)
+      continue;
+    SlotMapping.emplace(Slot, Entry.second);
+  }
+  if (SlotMapping.empty())
+    return;
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB)
+      for (unsigned i = 0, ee = MI.getNumOperands(); i != ee; ++i) {
+        MachineOperand &MO = MI.getOperand(i);
+        if (!MO.isFI())
+          continue;
+        int OldFI = MO.getIndex();
+        if (OldFI < 0)
+          continue;
+        auto FoundFI = SlotMapping.find(OldFI);
+        if (FoundFI == SlotMapping.end())
+          continue;
+        int NewFI = FoundFI->second;
+        if (NewFI == OldFI)
+          continue;
+        MO.setIndex(NewFI);
+      }
+  }
+}
+
+void RegAllocBase::removeV8StatepointRegs() {
+  MachineFunction &MF = VRM->getMachineFunction();
+  unsigned StartIdx = 0;
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+      switch (MI.getOpcode()) {
+      case TargetOpcode::STATEPOINT: {
+        // For statepoints, fold deopt and gc arguments, but not call arguments.
+        StartIdx = StatepointOpers(&MI).getVarIdx();
+        if (CallingConv::V8CC !=
+            MI.getOperand(StartIdx + StatepointOpers::CCOffset).getImm())
+          return;
+      } break;
+      default:
+        return;
+      }
+
+      for (int i = MI.getNumOperands() - 1,
+               end = StartIdx + StatepointOpers::NumDeoptOperandsOffset;
+           i != end; --i) {
+        MachineOperand &MO = MI.getOperand(i);
+        if (!MO.isReg())
+          continue;
+        MI.RemoveOperand(i);
+      }
+    }
+  }
 }

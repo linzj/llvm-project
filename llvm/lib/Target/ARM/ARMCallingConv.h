@@ -48,6 +48,18 @@ bool RetFastCC_ARM_APCS(unsigned ValNo, MVT ValVT, MVT LocVT,
                         CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
                         CCState &State);
 
+bool CC_ARM_V8(unsigned ValNo, MVT ValVT, MVT LocVT,
+               CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+               CCState &State);
+bool CC_ARM_V8SB(unsigned ValNo, MVT ValVT, MVT LocVT,
+                 CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+                 CCState &State);
+bool RetCC_ARM_V8(unsigned ValNo, MVT ValVT, MVT LocVT,
+                  CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+                  CCState &State);
+bool RetCC_ARM_V8SB(unsigned ValNo, MVT ValVT, MVT LocVT,
+                    CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+                    CCState &State);
 } // namespace llvm
 
 #endif

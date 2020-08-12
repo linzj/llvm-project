@@ -201,8 +201,13 @@ unsigned
 AArch64MCCodeEmitter::getMachineOpValue(const MCInst &MI, const MCOperand &MO,
                                         SmallVectorImpl<MCFixup> &Fixups,
                                         const MCSubtargetInfo &STI) const {
-  if (MO.isReg())
+  if (MO.isReg()) {
+    if (MO.getReg() == AArch64::SP &&
+        STI.getTargetTriple().getEnvironment() == Triple::Dart) {
+      return Ctx.getRegisterInfo()->getEncodingValue(AArch64::X15);
+    }
     return Ctx.getRegisterInfo()->getEncodingValue(MO.getReg());
+  }
 
   assert(MO.isImm() && "did not expect relocated expression");
   return static_cast<unsigned>(MO.getImm());

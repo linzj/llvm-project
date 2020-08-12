@@ -755,6 +755,8 @@ public:
   bool isAPCS_ABI() const;
   bool isAAPCS_ABI() const;
   bool isAAPCS16_ABI() const;
+  bool isV8_ABI() const;
+  bool isDart_ABI() const;
 
   bool isROPI() const;
   bool isRWPI() const;

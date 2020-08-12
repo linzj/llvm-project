@@ -29,15 +29,20 @@ using namespace dwarf;
 
 void ARMElfTargetObjectFile::Initialize(MCContext &Ctx,
                                         const TargetMachine &TM) {
-  const ARMBaseTargetMachine &ARM_TM = static_cast<const ARMBaseTargetMachine &>(TM);
-  bool isAAPCS_ABI = ARM_TM.TargetABI == ARMBaseTargetMachine::ARMABI::ARM_ABI_AAPCS;
+  const ARMBaseTargetMachine &ARM_TM =
+      static_cast<const ARMBaseTargetMachine &>(TM);
+  bool isAAPCS_ABI =
+      ARM_TM.TargetABI == ARMBaseTargetMachine::ARMABI::ARM_ABI_AAPCS;
+  bool isV8_ABI = ARM_TM.TargetABI == ARMBaseTargetMachine::ARMABI::ARM_ABI_V8;
+  bool isDart_ABI =
+      ARM_TM.TargetABI == ARMBaseTargetMachine::ARMABI::ARM_ABI_Dart;
   bool genExecuteOnly =
       ARM_TM.getMCSubtargetInfo()->hasFeature(ARM::FeatureExecuteOnly);
 
   TargetLoweringObjectFileELF::Initialize(Ctx, TM);
   InitializeELF(isAAPCS_ABI);
 
-  if (isAAPCS_ABI) {
+  if (isAAPCS_ABI || isV8_ABI || isDart_ABI) {
     LSDASection = nullptr;
   }
 

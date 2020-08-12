@@ -257,6 +257,64 @@ def CC_ARM_Win32_CFGuard_Check : CallingConv<[
 
 
 //===----------------------------------------------------------------------===//
+// V8 Calling Conventions
+//===----------------------------------------------------------------------===//
+
+let Entry = 1 in
+def CC_ARM_V8: CallingConv<[
+  CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
+
+  // i64/f64 is passed in even pairs of GPRs
+  // i64 is 8-aligned i32 here, so we may need to eat R1 as a pad register
+  // (and the same is true for f64 if VFP is not enabled)
+  CCIfType<[i32], CCIfAlign<"8", CCAssignToRegWithShadow<[R0, R2], [R0, R1]>>>,
+  CCIfType<[i32], CCIf<"ArgFlags.getOrigAlign() != 8",
+                       CCAssignToReg<[R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R12]>>>,
+
+  CCIfType<[i32], CCAssignToStackWithShadow<4, 4, [R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R12]>>,
+  CCIfType<[f32], CCAssignToReg<[S0, S1, S2, S3, S4, S5, S6, S7, S8,
+                                 S9, S10, S11, S12, S13, S14, S15]>>,
+  CCIfType<[f64], CCAssignToReg<[D0, D1, D2, D3, D4, D5, D6, D7]>>
+]>;
+
+let Entry = 1 in
+def RetCC_ARM_V8: CallingConv<[
+  CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
+  CCIfType<[i32], CCAssignToReg<[R0, R1, R2, R3]>>,
+  CCIfType<[i64], CCAssignToRegWithShadow<[R0, R2], [R1, R3]>>,
+  CCIfType<[f64], CCAssignToReg<[D0, D1, D2, D3, D4, D5, D6, D7]>>,
+  CCIfType<[f32], CCAssignToReg<[S0, S1, S2, S3, S4, S5, S6, S7, S8,
+                                 S9, S10, S11, S12, S13, S14, S15]>>
+]>;
+
+let Entry = 1 in
+def CC_ARM_V8SB: CallingConv<[
+  CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
+
+  // i64/f64 is passed in even pairs of GPRs
+  // i64 is 8-aligned i32 here, so we may need to eat R1 as a pad register
+  // (and the same is true for f64 if VFP is not enabled)
+  CCIfType<[i32], CCIfAlign<"8", CCAssignToRegWithShadow<[R0, R2], [R0, R1]>>>,
+  CCIfType<[i32], CCIf<"ArgFlags.getOrigAlign() != 8",
+                       CCAssignToReg<[R0, R1, R2, R3, R4, R10, R11, R12]>>>,
+
+  CCIfType<[i32], CCIfAlign<"8", CCAssignToStackWithShadow<4, 8, [R0, R1, R2, R3, R4, R10, R11, R12]>>>,
+  CCIfType<[i32], CCAssignToStackWithShadow<4, 4, [R0, R1, R2, R3, R4, R10, R11, R12]>>,
+  CCIfType<[f32], CCAssignToStackWithShadow<4, 4, [Q0, Q1, Q2, Q3]>>,
+  CCIfType<[f64], CCAssignToStackWithShadow<8, 8, [Q0, Q1, Q2, Q3]>>,
+  CCIfType<[v2f64], CCIfAlign<"16",
+           CCAssignToStackWithShadow<16, 16, [Q0, Q1, Q2, Q3]>>>,
+  CCIfType<[v2f64], CCAssignToStackWithShadow<16, 8, [Q0, Q1, Q2, Q3]>>
+]>;
+
+let Entry = 1 in
+def RetCC_ARM_V8SB: CallingConv<[
+  CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
+  CCIfType<[i32], CCAssignToReg<[R0, R1, R2, R3]>>,
+  CCIfType<[i64], CCAssignToRegWithShadow<[R0, R2], [R1, R3]>>
+]>;
+
+//===----------------------------------------------------------------------===//
 // Callee-saved register lists.
 //===----------------------------------------------------------------------===//
 
@@ -270,6 +328,16 @@ def CSR_AAPCS : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, R4,
 // AAPCS, and also preserves all floating point registers.
 def CSR_Win_AAPCS_CFGuard_Check : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7,
                                      R6, R5, R4, (sequence "D%u", 15, 0))>;
+def CSR_V8CC : CalleeSavedRegs<(add LR, R11, R10)>;
+
+def CSR_V8FPSave: CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, R4,
+                                     (sequence "D%u", 31, 0))>;
+
+def CSR_V8SBCC : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, (sequence "D%u", 31, 0))>;
+
+def CSR_Dart_Shared_Stub : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6,
+                                           R5, R4, R3, R2, R1, R0,
+                                     (sequence "D%u", 31, 0))>;
 
 // R8 is used to pass swifterror, remove it from CSR.
 def CSR_AAPCS_SwiftError : CalleeSavedRegs<(sub CSR_AAPCS, R8)>;

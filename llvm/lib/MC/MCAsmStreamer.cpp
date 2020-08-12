@@ -990,7 +990,7 @@ void MCAsmStreamer::EmitValueImpl(const MCExpr *Value, unsigned Size,
   if (!Directive) {
     int64_t IntValue;
     if (!Value->evaluateAsAbsolute(IntValue))
-      report_fatal_error("Don't know how to emit this value.");
+      IntValue = -1;
 
     // We couldn't handle the requested integer size so we fallback by breaking
     // the request down into several, smaller, integers.

@@ -91,6 +91,10 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
       // exception handling.
       return CSR_GenericInt_SaveList;
     }
+  } else if (F.getCallingConv() == CallingConv::V8CC) {
+    return CSR_V8CC_SaveList;
+  } else if (F.getCallingConv() == CallingConv::V8SBCC) {
+    return CSR_V8CC_SaveList;
   }
 
   if (STI.getTargetLowering()->supportSwiftError() &&
@@ -127,6 +131,14 @@ ARMBaseRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
     return CSR_NoRegs_RegMask;
   if (CC == CallingConv::CFGuard_Check)
     return CSR_Win_AAPCS_CFGuard_Check_RegMask;
+  if (CC == CallingConv::V8CC)
+    return CSR_V8CC_RegMask;
+  if (CC == CallingConv::V8SBCC)
+    return CSR_V8SBCC_RegMask;
+  if (CC == CallingConv::V8FPSave)
+    return CSR_V8FPSave_RegMask;
+  if (CC == CallingConv::DartSharedStub)
+    return CSR_Dart_Shared_Stub_RegMask;
   if (STI.getTargetLowering()->supportSwiftError() &&
       MF.getFunction().getAttributes().hasAttrSomewhere(Attribute::SwiftError))
     return STI.isTargetDarwin() ? CSR_iOS_SwiftError_RegMask
@@ -215,6 +227,25 @@ getReservedRegs(const MachineFunction &MF) const {
   // For v8.1m architecture
   markSuperRegs(Reserved, ARM::ZR);
 
+  const Function &F = MF.getFunction();
+  if (F.getCallingConv() == CallingConv::V8SBCC) {
+    markSuperRegs(Reserved, ARM::R5);
+    markSuperRegs(Reserved, ARM::R6);
+    markSuperRegs(Reserved, ARM::R7);
+    markSuperRegs(Reserved, ARM::R8);
+    markSuperRegs(Reserved, ARM::R9);
+    markSuperRegs(Reserved, ARM::R10);
+    markSuperRegs(Reserved, ARM::R11);
+  } else if (F.getCallingConv() == CallingConv::V8CC) {
+    markSuperRegs(Reserved, ARM::R10);
+    markSuperRegs(Reserved, ARM::R11);
+  }
+  if (F.hasFnAttribute("dart-call")) {
+    // reserve R5 for object pool
+    markSuperRegs(Reserved, ARM::R5);
+    // reserve R7 for dispatch table
+    markSuperRegs(Reserved, ARM::R7);
+  }
   assert(checkAllSuperRegsMarked(Reserved));
   return Reserved;
 }
@@ -381,6 +412,8 @@ bool ARMBaseRegisterInfo::hasBasePointer(const MachineFunction &MF) const {
   const ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
   const ARMFrameLowering *TFI = getFrameLowering(MF);
 
+  if (MF.getFunction().getCallingConv() == CallingConv::V8CC)
+    return false;
   // If we have stack realignment and VLAs, we have no pointer to use to
   // access the stack. If we have stack realignment, and a large call frame,
   // we have no place to allocate the emergency spill slot.
@@ -421,6 +454,8 @@ bool ARMBaseRegisterInfo::canRealignStack(const MachineFunction &MF) const {
   // 2. There are VLAs in the function and the base pointer is disabled.
   if (!TargetRegisterInfo::canRealignStack(MF))
     return false;
+  if (MF.getFunction().getCallingConv() == CallingConv::V8CC)
+    return true;
   // Stack realignment requires a frame pointer.  If we already started
   // register allocation with frame pointer elimination, it is too late now.
   if (!MRI->canReserveReg(getFramePointerReg(MF.getSubtarget<ARMSubtarget>())))
@@ -890,4 +925,19 @@ bool ARMBaseRegisterInfo::shouldCoalesce(MachineInstr *MI,
     return true;
   }
   return false;
+}
+
+TargetRegisterInfo::VirtRegToFixSlotMap
+ARMBaseRegisterInfo::getHoistToFixStackSlotMap(MachineFunction &MF) const {
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  const ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  VirtRegToFixSlotMap result;
+  for (auto &livein : MRI.liveins()) {
+    if (AFI->isWASM() && (livein.first == ARM::R3)) {
+      result.emplace_back(livein.second,
+                          MFI.CreateFixedSpillStackObject(4, -16));
+    }
+  }
+  return result;
 }

@@ -29,6 +29,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -243,11 +244,23 @@ void StackMaps::print(raw_ostream &OS) {
 }
 
 /// Create a live-out register record for the given register Reg.
-StackMaps::LiveOutReg
-StackMaps::createLiveOutReg(unsigned Reg, const TargetRegisterInfo *TRI) const {
-  unsigned DwarfRegNum = getDwarfRegNum(Reg, TRI);
-  unsigned Size = TRI->getSpillSize(*TRI->getMinimalPhysRegClass(Reg));
-  return LiveOutReg(Reg, DwarfRegNum, Size);
+void StackMaps::createLiveOutReg(unsigned Reg, const TargetRegisterInfo *TRI,
+                                 StackMaps::LiveOutVec &LiveOuts) const {
+  int DwarfRegNum = TRI->getDwarfRegNum(Reg, false);
+  for (MCSuperRegIterator SR(Reg, TRI); SR.isValid() && DwarfRegNum < 0; ++SR)
+    DwarfRegNum = TRI->getDwarfRegNum(*SR, false);
+  if (DwarfRegNum >= 0) {
+    unsigned Size = TRI->getSpillSize(*TRI->getMinimalPhysRegClass(Reg));
+    LiveOuts.push_back(LiveOutReg(Reg, DwarfRegNum, Size));
+    return;
+  }
+  for (MCSubRegIterator SR(Reg, TRI); SR.isValid(); ++SR) {
+    DwarfRegNum = TRI->getDwarfRegNum(*SR, false);
+    assert(DwarfRegNum >= 0 && "DwarfRegNum not found");
+    unsigned Size = TRI->getSpillSize(*TRI->getMinimalPhysRegClass(*SR));
+
+    LiveOuts.push_back(LiveOutReg(*SR, DwarfRegNum, Size));
+  }
 }
 
 /// Parse the register live-out mask and return a vector of live-out registers
@@ -261,7 +274,7 @@ StackMaps::parseRegisterLiveOutMask(const uint32_t *Mask) const {
   // Create a LiveOutReg for each bit that is set in the register mask.
   for (unsigned Reg = 0, NumRegs = TRI->getNumRegs(); Reg != NumRegs; ++Reg)
     if ((Mask[Reg / 32] >> (Reg % 32)) & 1)
-      LiveOuts.push_back(createLiveOutReg(Reg, TRI));
+      createLiveOutReg(Reg, TRI, LiveOuts);
 
   // We don't need to keep track of a register if its super-register is already
   // in the list. Merge entries that refer to the same dwarf register and use
@@ -296,14 +309,29 @@ StackMaps::parseRegisterLiveOutMask(const uint32_t *Mask) const {
 
 void StackMaps::recordStackMapOpers(const MCSymbol &MILabel,
                                     const MachineInstr &MI, uint64_t ID,
+                                    const MachineOperand *Callee,
                                     MachineInstr::const_mop_iterator MOI,
                                     MachineInstr::const_mop_iterator MOE,
                                     bool recordResult) {
   MCContext &OutContext = AP.OutStreamer->getContext();
-  
+
   LocationVec Locations;
   LiveOutVec LiveOuts;
 
+  if (Callee && Callee->isReg() && !Callee->isUndef()) {
+    const TargetRegisterInfo *TRI = AP.MF->getSubtarget().getRegisterInfo();
+    unsigned Offset = 0;
+    unsigned DwarfRegNum = getDwarfRegNum(Callee->getReg(), TRI);
+    unsigned LLVMRegNum = *TRI->getLLVMRegNum(DwarfRegNum, false);
+    unsigned SubRegIdx = TRI->getSubRegIndex(LLVMRegNum, Callee->getReg());
+    if (SubRegIdx)
+      Offset = TRI->getSubRegIdxOffset(SubRegIdx);
+
+    const TargetRegisterClass *RC =
+        TRI->getMinimalPhysRegClass(Callee->getReg());
+    Locations.emplace_back(Location::Register, TRI->getSpillSize(*RC),
+                           DwarfRegNum, Offset);
+  }
   if (recordResult) {
     assert(PatchPointOpers(&MI).hasDef() && "Stackmap has no return value.");
     parseOperand(MI.operands_begin(), std::next(MI.operands_begin()), Locations,
@@ -364,18 +392,20 @@ void StackMaps::recordStackMap(const MCSymbol &L, const MachineInstr &MI) {
 
   StackMapOpers opers(&MI);
   const int64_t ID = MI.getOperand(PatchPointOpers::IDPos).getImm();
-  recordStackMapOpers(L, MI, ID, std::next(MI.operands_begin(),
-                                           opers.getVarIdx()),
+  recordStackMapOpers(L, MI, ID, nullptr,
+                      std::next(MI.operands_begin(), opers.getVarIdx()),
                       MI.operands_end());
 }
 
 void StackMaps::recordPatchPoint(const MCSymbol &L, const MachineInstr &MI) {
-  assert(MI.getOpcode() == TargetOpcode::PATCHPOINT && "expected patchpoint");
+  assert(((MI.getOpcode() == TargetOpcode::PATCHPOINT) ||
+          (MI.getOpcode() == TargetOpcode::TCPATCHPOINT)) &&
+         "expected patchpoint");
 
   PatchPointOpers opers(&MI);
   const int64_t ID = opers.getID();
   auto MOI = std::next(MI.operands_begin(), opers.getStackMapStartIdx());
-  recordStackMapOpers(L, MI, ID, MOI, MI.operands_end(),
+  recordStackMapOpers(L, MI, ID, &opers.getCallTarget(), MOI, MI.operands_end(),
                       opers.isAnyReg() && opers.hasDef());
 
 #ifndef NDEBUG
@@ -397,8 +427,8 @@ void StackMaps::recordStatepoint(const MCSymbol &L, const MachineInstr &MI) {
   // Record all the deopt and gc operands (they're contiguous and run from the
   // initial index to the end of the operand list)
   const unsigned StartIdx = opers.getVarIdx();
-  recordStackMapOpers(L, MI, opers.getID(), MI.operands_begin() + StartIdx,
-                      MI.operands_end(), false);
+  recordStackMapOpers(L, MI, opers.getID(), &opers.getCallTarget(),
+                      MI.operands_begin() + StartIdx, MI.operands_end(), false);
 }
 
 /// Emit the stackmap header.
@@ -442,7 +472,7 @@ void StackMaps::emitFunctionFrameRecords(MCStreamer &OS) {
     LLVM_DEBUG(dbgs() << WSMP << "function addr: " << FR.first
                       << " frame size: " << FR.second.StackSize
                       << " callsite count: " << FR.second.RecordCount << '\n');
-    OS.EmitSymbolValue(FR.first, 8);
+    OS.EmitSymbolValue(FR.first, AP.TM.getProgramPointerSize());
     OS.EmitIntValue(FR.second.StackSize, 8);
     OS.EmitIntValue(FR.second.RecordCount, 8);
   }

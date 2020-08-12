@@ -30,6 +30,7 @@ public:
         IsThinLTOPreLink(IsThinLTOPreLink) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+  static std::string SampleProfileFileFromOption();
 
 private:
   std::string ProfileFileName;

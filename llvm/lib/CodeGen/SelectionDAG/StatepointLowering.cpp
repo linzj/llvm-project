@@ -568,14 +568,15 @@ lowerStatepointMetaArgs(SmallVectorImpl<SDValue> &Ops,
   // arrays interwoven with each (lowered) base pointer immediately followed by
   // it's (lowered) derived pointer.  i.e
   // (base[0], ptr[0], base[1], ptr[1], ...)
+  bool LiveInOnly = SI.CLI.CallConv == CallingConv::V8CC;
   for (unsigned i = 0; i < SI.Bases.size(); ++i) {
     const Value *Base = SI.Bases[i];
-    lowerIncomingStatepointValue(Builder.getValue(Base), /*LiveInOnly*/ false,
-                                 Ops, MemRefs, Builder);
+    lowerIncomingStatepointValue(Builder.getValue(Base), LiveInOnly, Ops,
+                                 MemRefs, Builder);
 
     const Value *Ptr = SI.Ptrs[i];
-    lowerIncomingStatepointValue(Builder.getValue(Ptr), /*LiveInOnly*/ false,
-                                 Ops, MemRefs, Builder);
+    lowerIncomingStatepointValue(Builder.getValue(Ptr), LiveInOnly, Ops,
+                                 MemRefs, Builder);
   }
 
   // If there are any explicit spill slots passed to the statepoint, record
@@ -847,22 +848,7 @@ SelectionDAGBuilder::LowerStatepoint(ImmutableStatepoint ISP,
 #endif
 
   SDValue ActualCallee;
-
-  if (ISP.getNumPatchBytes() > 0) {
-    // If we've been asked to emit a nop sequence instead of a call instruction
-    // for this statepoint then don't lower the call target, but use a constant
-    // `null` instead.  Not lowering the call target lets statepoint clients get
-    // away without providing a physical address for the symbolic call target at
-    // link time.
-
-    const auto &TLI = DAG.getTargetLoweringInfo();
-    const auto &DL = DAG.getDataLayout();
-
-    unsigned AS = ISP.getCalledValue()->getType()->getPointerAddressSpace();
-    ActualCallee = DAG.getConstant(0, getCurSDLoc(), TLI.getPointerTy(DL, AS));
-  } else {
-    ActualCallee = getValue(ISP.getCalledValue());
-  }
+  ActualCallee = getValue(ISP.getCalledValue());
 
   StatepointLoweringInfo SI(DAG);
   populateCallLoweringInfo(SI.CLI, ISP.getCall(),
@@ -988,6 +974,42 @@ void SelectionDAGBuilder::visitGCResult(const GCResultInst &CI) {
   }
 }
 
+void SelectionDAGBuilder::visitGCException(const GCExceptionInst &CI) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  const Constant *PersonalityFn = FuncInfo.Fn->getPersonalityFn();
+  if (TLI.getExceptionPointerRegister(PersonalityFn) == 0 &&
+      TLI.getExceptionSelectorRegister(PersonalityFn) == 0)
+    return;
+  assert(FuncInfo.MBB->isEHPad() && "Call to landingpad not in landing pad!");
+  SDValue Op;
+  SDLoc dl = getCurSDLoc();
+  Type *RetTy = CI.getFunctionType()->getReturnType();
+  Op = DAG.getZExtOrTrunc(
+      DAG.getCopyFromReg(DAG.getEntryNode(), dl,
+                         FuncInfo.ExceptionPointerVirtReg,
+                         TLI.getPointerTy(DAG.getDataLayout())),
+      dl, TLI.getValueType(DAG.getDataLayout(), RetTy));
+  setValue(&CI, Op);
+}
+
+void SelectionDAGBuilder::visitGCExceptionData(const GCExceptionDataInst &CI) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  const Constant *PersonalityFn = FuncInfo.Fn->getPersonalityFn();
+  if (TLI.getExceptionPointerRegister(PersonalityFn) == 0 &&
+      TLI.getExceptionSelectorRegister(PersonalityFn) == 0)
+    return;
+  assert(FuncInfo.MBB->isEHPad() && "Call to landingpad not in landing pad!");
+  SDValue Op;
+  SDLoc dl = getCurSDLoc();
+  Type *RetTy = CI.getFunctionType()->getReturnType();
+  Op = DAG.getZExtOrTrunc(
+      DAG.getCopyFromReg(DAG.getEntryNode(), dl,
+                         FuncInfo.ExceptionSelectorVirtReg,
+                         TLI.getPointerTy(DAG.getDataLayout())),
+      dl, TLI.getValueType(DAG.getDataLayout(), RetTy));
+  setValue(&CI, Op);
+}
+
 void SelectionDAGBuilder::visitGCRelocate(const GCRelocateInst &Relocate) {
 #ifndef NDEBUG
   // Consistency check
@@ -1013,7 +1035,14 @@ void SelectionDAGBuilder::visitGCRelocate(const GCRelocateInst &Relocate) {
   // We didn't need to spill these special cases (constants and allocas).
   // See the handling in spillIncomingValueForStatepoint for detail.
   if (!DerivedPtrLocation) {
-    setValue(&Relocate, SD);
+    SDVTList NodeTys = DAG.getVTList(SD.getValueType());
+
+    SmallVector<SDValue, 1> Ops;
+    Ops.emplace_back(SD);
+    MachineSDNode *RelocateMCNode = DAG.getMachineNode(
+        TargetOpcode::RELOCATE_DEF, getCurSDLoc(), NodeTys, Ops);
+
+    setValue(&Relocate, SDValue(RelocateMCNode, 0));
     return;
   }
 
