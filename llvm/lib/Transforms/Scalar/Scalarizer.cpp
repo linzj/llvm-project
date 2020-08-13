@@ -380,7 +380,8 @@ bool ScalarizerVisitor::canTransferMetadata(unsigned Tag) {
           || Tag == LLVMContext::MD_alias_scope
           || Tag == LLVMContext::MD_noalias
           || Tag == ParallelLoopAccessMDKind
-          || Tag == LLVMContext::MD_access_group);
+          || Tag == LLVMContext::MD_access_group
+          || Tag == LLVMContext::MD_even_num);
 }
 
 // Transfer metadata from Op to the instructions in CV if it is known

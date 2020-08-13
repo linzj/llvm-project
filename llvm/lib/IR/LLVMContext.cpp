@@ -62,6 +62,7 @@ LLVMContext::LLVMContext() : pImpl(new LLVMContextImpl(*this)) {
     {MD_callees, "callees"},
     {MD_irr_loop, "irr_loop"},
     {MD_access_group, "llvm.access.group"},
+    {MD_even_num, "even_number"},
   };
 
   for (auto &MDKind : MDKinds) {

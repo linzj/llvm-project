@@ -2315,6 +2315,9 @@ void llvm::combineMetadata(Instruction *K, const Instruction *J,
       case LLVMContext::MD_fpmath:
         K->setMetadata(Kind, MDNode::getMostGenericFPMath(JMD, KMD));
         break;
+      case LLVMContext::MD_even_num:
+        K->setMetadata(Kind, JMD);
+        break;
       case LLVMContext::MD_invariant_load:
         // Only set the !invariant.load if it is present in both instructions.
         K->setMetadata(Kind, JMD);
@@ -2358,7 +2361,8 @@ void llvm::combineMetadataForCSE(Instruction *K, const Instruction *J,
       LLVMContext::MD_invariant_group, LLVMContext::MD_align,
       LLVMContext::MD_dereferenceable,
       LLVMContext::MD_dereferenceable_or_null,
-      LLVMContext::MD_access_group};
+      LLVMContext::MD_access_group,
+      LLVMContext::MD_even_num };
   combineMetadata(K, J, KnownIDs, KDominatesJ);
 }
 
@@ -2390,7 +2394,7 @@ void llvm::patchReplacementInstruction(Instruction *I, Value *Repl) {
       LLVMContext::MD_noalias,         LLVMContext::MD_range,
       LLVMContext::MD_fpmath,          LLVMContext::MD_invariant_load,
       LLVMContext::MD_invariant_group, LLVMContext::MD_nonnull,
-      LLVMContext::MD_access_group};
+      LLVMContext::MD_access_group,    LLVMContext::MD_even_num};
   combineMetadata(ReplInst, I, KnownIDs, false);
 }
 

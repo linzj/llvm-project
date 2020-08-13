@@ -977,6 +977,10 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
     if (MDNode *MD =
             Q.IIQ.getMetadata(cast<LoadInst>(I), LLVMContext::MD_range))
       computeKnownBitsFromRangeMetadata(*MD, Known);
+    else if (MDNode *MD = Q.IIQ.getMetadata(cast<LoadInst>(I),
+                                            LLVMContext::MD_even_num)) {
+      Known.Zero.setBit(0);
+    }
     break;
   case Instruction::And: {
     // If either the LHS or the RHS are Zero, the result is zero.
