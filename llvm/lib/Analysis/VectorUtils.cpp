@@ -600,7 +600,7 @@ Instruction *llvm::propagateMetadata(Instruction *Inst, ArrayRef<Value *> VL) {
   for (auto Kind : {LLVMContext::MD_tbaa, LLVMContext::MD_alias_scope,
                     LLVMContext::MD_noalias, LLVMContext::MD_fpmath,
                     LLVMContext::MD_nontemporal, LLVMContext::MD_invariant_load,
-                    LLVMContext::MD_access_group}) {
+                    LLVMContext::MD_access_group, LLVMContext::MD_even_num}) {
     MDNode *MD = I0->getMetadata(Kind);
 
     for (int J = 1, E = VL.size(); MD && J != E; ++J) {
@@ -619,6 +619,7 @@ Instruction *llvm::propagateMetadata(Instruction *Inst, ArrayRef<Value *> VL) {
       case LLVMContext::MD_noalias:
       case LLVMContext::MD_nontemporal:
       case LLVMContext::MD_invariant_load:
+      case LLVMContext::MD_even_num:
         MD = MDNode::intersect(MD, IMD);
         break;
       case LLVMContext::MD_access_group:
