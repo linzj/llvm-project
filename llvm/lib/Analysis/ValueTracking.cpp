@@ -1423,6 +1423,10 @@ static void computeKnownBitsFromOperator(const Operator *I,
     if (MDNode *MD =
             Q.IIQ.getMetadata(cast<LoadInst>(I), LLVMContext::MD_range))
       computeKnownBitsFromRangeMetadata(*MD, Known);
+    else if (MDNode *MD = Q.IIQ.getMetadata(cast<LoadInst>(I),
+                                            LLVMContext::MD_even_num)) {
+      Known.Zero.setBit(0);
+    }
     break;
   case Instruction::And:
     computeKnownBits(I->getOperand(1), DemandedElts, Known, Q, Depth + 1);

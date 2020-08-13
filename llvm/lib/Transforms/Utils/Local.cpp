@@ -2994,6 +2994,9 @@ static void combineMetadata(Instruction *K, const Instruction *J,
         if (!AAOnly)
           K->setMetadata(Kind, MDNode::getMostGenericFPMath(JMD, KMD));
         break;
+      case LLVMContext::MD_even_num:
+        K->setMetadata(Kind, JMD);
+        break;
       case LLVMContext::MD_invariant_load:
       case LLVMContext::MD_invariant_group:
         // If K moves, only keep the invariant metadata if it is present on
@@ -3156,6 +3159,7 @@ void llvm::copyMetadataForLoad(LoadInst &Dest, const LoadInst &Source) {
     case LLVMContext::MD_noundef:
     case LLVMContext::MD_noalias_addrspace:
     case LLVMContext::MD_invariant_group:
+    case LLVMContext::MD_even_num:
       // All of these directly apply.
       Dest.setMetadata(ID, N);
       break;

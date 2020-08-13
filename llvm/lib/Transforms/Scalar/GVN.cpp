@@ -1652,6 +1652,8 @@ void GVNPass::eliminatePartiallyRedundantLoad(
       NewLoad->setMetadata(LLVMContext::MD_invariant_group, InvGroupMD);
     if (auto *RangeMD = Load->getMetadata(LLVMContext::MD_range))
       NewLoad->setMetadata(LLVMContext::MD_range, RangeMD);
+    if (auto *MD = Load->getMetadata(LLVMContext::MD_even_num))
+      NewLoad->setMetadata(LLVMContext::MD_even_num, MD);
     if (auto *NoFPClassMD = Load->getMetadata(LLVMContext::MD_nofpclass))
       NewLoad->setMetadata(LLVMContext::MD_nofpclass, NoFPClassMD);
 
