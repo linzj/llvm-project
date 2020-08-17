@@ -144,6 +144,7 @@
 #include "llvm/MC/MCInstrDesc.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -340,6 +341,16 @@ bool ARMFrameLowering::hasFPImpl(const MachineFunction &MF) const {
   // Check to see if the target want to forcibly keep frame pointer.
   if (keepFramePointer(MF))
     return true;
+
+  if (MFI.hasCalls()) {
+    switch (MF.getTarget().getTargetTriple().getEnvironment()) {
+    case Triple::Dart:
+    case Triple::V8:
+      return true;
+    default:
+      break;
+    }
+  }
 
   // ABI-required frame pointer.
   if (MF.getTarget().Options.DisableFramePointerElim(MF))
