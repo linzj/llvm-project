@@ -261,6 +261,15 @@ bool AArch64FrameLowering::hasFP(const MachineFunction &MF) const {
   // funclets.
   if (MF.hasEHFunclets())
     return true;
+  if (MFI.hasCalls()) {
+    switch (MF.getSubtarget().getTargetTriple().getEnvironment()) {
+    case Triple::Dart:
+    case Triple::V8:
+      return true;
+    default:
+      break;
+    }
+  }
   // Retain behavior of always omitting the FP for leaf functions when possible.
   if (MF.getTarget().Options.DisableFramePointerElim(MF))
     return true;

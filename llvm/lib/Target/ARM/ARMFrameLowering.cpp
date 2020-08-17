@@ -105,6 +105,15 @@ bool ARMFrameLowering::hasFP(const MachineFunction &MF) const {
   const TargetRegisterInfo *RegInfo = MF.getSubtarget().getRegisterInfo();
   const MachineFrameInfo &MFI = MF.getFrameInfo();
 
+  if (MFI.hasCalls()) {
+    switch (MF.getSubtarget().getTargetTriple().getEnvironment()) {
+    case Triple::Dart:
+    case Triple::V8:
+      return true;
+    default:
+      break;
+    }
+  }
   // ABI-required frame pointer.
   if (MF.getTarget().Options.DisableFramePointerElim(MF))
     return true;
