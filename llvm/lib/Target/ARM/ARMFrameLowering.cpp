@@ -1599,6 +1599,10 @@ static unsigned estimateRSStackSizeLimit(MachineFunction &MF,
     for (auto &MI : MBB) {
       if (MI.isDebugInstr())
         continue;
+      if (MI.getOpcode() == TargetOpcode::STATEPOINT ||
+          MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+          MI.getOpcode() == TargetOpcode::STACKMAP)
+        break;
       for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
         if (!MI.getOperand(i).isFI())
           continue;
