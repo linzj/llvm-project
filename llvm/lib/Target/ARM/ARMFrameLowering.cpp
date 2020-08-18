@@ -2669,6 +2669,10 @@ static unsigned estimateRSStackSizeLimit(MachineFunction &MF,
         continue;
       if (MI.getOpcode() == TargetOpcode::LOCAL_ESCAPE)
         continue;
+      if (MI.getOpcode() == TargetOpcode::STATEPOINT ||
+          MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+          MI.getOpcode() == TargetOpcode::STACKMAP)
+        break;
       for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
         if (!MI.getOperand(i).isFI())
           continue;
