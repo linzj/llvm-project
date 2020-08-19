@@ -26834,10 +26834,68 @@ static SDValue combineV3I8LoadExt(LoadSDNode *LD, SelectionDAG &DAG) {
 // Perform TBI simplification if supported by the target and try to break up
 // nontemporal loads larger than 256-bits loads for odd types so LDNPQ 256-bit
 // load instructions can be selected.
+static int anchorOffset(int Offset, unsigned Size) {
+  if (isInt<9>(Offset))
+    return 0;
+  int Scale = countTrailingZeros(Size);
+  if (isUIntN(Scale + 12, Offset) && (Offset == ((Offset >> Scale) << Scale)))
+    return 0;
+  // Ignore those constants can be defined in one instruction.
+  if (Offset <= 65535)
+    return 0;
+  const int Upper20 = Offset & 0xfffff000;
+  if (isUInt<12>(Upper20))
+    return Upper20;
+  if (isUInt<12>(Upper20 >> 12))
+    return Upper20;
+  return 0;
+}
+
+static bool legalizedAddress(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
+                             SelectionDAG &DAG,
+                             const AArch64Subtarget *Subtarget) {
+  if (!DCI.isAfterLegalizeDAG())
+    return false;
+  const bool IsStore = N->getOpcode() == ISD::STORE;
+  const unsigned AddrOpIdx = (IsStore ? 2 : 1);
+  SDValue Addr = N->getOperand(AddrOpIdx);
+  if (Addr.getOpcode() != ISD::ADD)
+    return false;
+
+  auto *C = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+  if (!C)
+    return false;
+
+  unsigned Size = dyn_cast<MemSDNode>(N)->getMemOperand()->getSize();
+  int BaseOffset = anchorOffset(C->getSExtValue(), Size);
+  if (BaseOffset == 0)
+    return false;
+  SDLoc DL(N);
+
+  SDValue BaseOffVal = DAG.getConstant(BaseOffset, DL, C->getValueType(0));
+  BaseOffVal = DAG.getSExtOrTrunc(BaseOffVal, DL, Addr.getValueType());
+  SDValue NewAdd = DAG.getNode(ISD::ADD, DL, Addr.getValueType(),
+                               Addr.getOperand(0), BaseOffVal);
+  SDValue IndexVal =
+      DAG.getConstant(C->getSExtValue() - BaseOffset, DL, C->getValueType(0));
+  IndexVal = DAG.getSExtOrTrunc(IndexVal, DL, Addr.getValueType());
+  NewAdd = DAG.getNode(ISD::ADD, DL, Addr.getValueType(), NewAdd, IndexVal);
+  if (IsStore) {
+    DAG.UpdateNodeOperands(N, N->getOperand(0), N->getOperand(1), NewAdd,
+                           N->getOperand(3));
+  } else {
+    DAG.UpdateNodeOperands(N, N->getOperand(0), NewAdd, N->getOperand(2));
+  }
+  return true;
+}
+
 static SDValue performLOADCombine(SDNode *N,
                                   TargetLowering::DAGCombinerInfo &DCI,
                                   SelectionDAG &DAG,
                                   const AArch64Subtarget *Subtarget) {
+  if (legalizedAddress(N, DCI, DAG, Subtarget))
+    return SDValue();
+
   if (Subtarget->supportsAddressTopByteIgnored())
     performTBISimplification(N->getOperand(1), DCI, DAG);
 
@@ -27462,6 +27520,9 @@ static SDValue performSTORECombine(SDNode *N,
 
   if (SDValue Split = splitStores(N, DCI, DAG, Subtarget))
     return Split;
+
+  if (legalizedAddress(N, DCI, DAG, Subtarget))
+    return SDValue();
 
   if (Subtarget->supportsAddressTopByteIgnored() &&
       performTBISimplification(N->getOperand(2), DCI, DAG))
