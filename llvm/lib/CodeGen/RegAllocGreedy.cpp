@@ -447,7 +447,8 @@ private:
   LiveInterval *dequeue(PQueue &CurQueue);
 
   BlockFrequency calcSpillCost();
-  bool addSplitConstraints(InterferenceCache::Cursor, BlockFrequency&);
+  bool addSplitConstraints(InterferenceCache::Cursor Intf, BlockFrequency &,
+                           BlockFrequency &);
   bool addThroughConstraints(InterferenceCache::Cursor, ArrayRef<unsigned>);
   bool growRegion(GlobalSplitCandidate &Cand);
   bool splitCanCauseEvictionChain(unsigned Evictee, GlobalSplitCandidate &Cand,
@@ -458,7 +459,8 @@ private:
                                const AllocationOrder &Order);
   BlockFrequency calcGlobalSplitCost(GlobalSplitCandidate &,
                                      const AllocationOrder &Order,
-                                     bool *CanCauseEvictionChain);
+                                     bool *CanCauseEvictionChain,
+                                     BlockFrequency &RepeatedSpillCost);
   bool calcCompactRegion(GlobalSplitCandidate&);
   void splitAroundRegion(LiveRangeEdit&, ArrayRef<unsigned>);
   void calcGapWeights(unsigned, SmallVectorImpl<float>&);
@@ -1184,12 +1186,14 @@ unsigned RAGreedy::tryEvict(LiveInterval &VirtReg,
 /// that all preferences in SplitConstraints are met.
 /// Return false if there are no bundles with positive bias.
 bool RAGreedy::addSplitConstraints(InterferenceCache::Cursor Intf,
-                                   BlockFrequency &Cost) {
+                                   BlockFrequency &Cost,
+                                   BlockFrequency &RepeatedSpillCost) {
   ArrayRef<SplitAnalysis::BlockInfo> UseBlocks = SA->getUseBlocks();
 
   // Reset interference dependent info.
   SplitConstraints.resize(UseBlocks.size());
   BlockFrequency StaticCost = 0;
+  unsigned LastSpillOutBundle = UINT_MAX;
   for (unsigned i = 0; i != UseBlocks.size(); ++i) {
     const SplitAnalysis::BlockInfo &BI = UseBlocks[i];
     SpillPlacement::BlockConstraint &BC = SplitConstraints[i];
@@ -1231,14 +1235,27 @@ bool RAGreedy::addSplitConstraints(InterferenceCache::Cursor Intf,
 
     // Interference for the live-out value.
     if (BI.LiveOut) {
+      unsigned OutBundle = Bundles->getBundle(BC.Number, true);
       if (Intf.last() >= SA->getLastSplitPoint(BC.Number)) {
         BC.Exit = SpillPlacement::MustSpill;
         ++Ins;
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
       } else if (Intf.last() > BI.LastInstr) {
         BC.Exit = SpillPlacement::PrefSpill;
         ++Ins;
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
       } else if (Intf.last() > BI.FirstInstr) {
         ++Ins;
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
       }
     }
 
@@ -1384,7 +1401,8 @@ bool RAGreedy::calcCompactRegion(GlobalSplitCandidate &Cand) {
 
   // The static split cost will be zero since Cand.Intf reports no interference.
   BlockFrequency Cost;
-  if (!addSplitConstraints(Cand.Intf, Cost)) {
+  BlockFrequency RepeatedSpillCost;
+  if (!addSplitConstraints(Cand.Intf, Cost, RepeatedSpillCost)) {
     LLVM_DEBUG(dbgs() << ", none.\n");
     return false;
   }
@@ -1580,18 +1598,20 @@ bool RAGreedy::splitCanCauseLocalSpill(unsigned VirtRegToSplit,
 /// pattern in LiveBundles. This cost should be added to the local cost of the
 /// interference pattern in SplitConstraints.
 ///
-BlockFrequency RAGreedy::calcGlobalSplitCost(GlobalSplitCandidate &Cand,
-                                             const AllocationOrder &Order,
-                                             bool *CanCauseEvictionChain) {
+BlockFrequency RAGreedy::calcGlobalSplitCost(
+    GlobalSplitCandidate &Cand, const AllocationOrder &Order,
+    bool *CanCauseEvictionChain, BlockFrequency &RepeatedSpillCost) {
   BlockFrequency GlobalCost = 0;
   const BitVector &LiveBundles = Cand.LiveBundles;
   unsigned VirtRegToSplit = SA->getParent().reg;
   ArrayRef<SplitAnalysis::BlockInfo> UseBlocks = SA->getUseBlocks();
+  unsigned LastSpillOutBundle = UINT_MAX;
   for (unsigned i = 0; i != UseBlocks.size(); ++i) {
     const SplitAnalysis::BlockInfo &BI = UseBlocks[i];
     SpillPlacement::BlockConstraint &BC = SplitConstraints[i];
-    bool RegIn  = LiveBundles[Bundles->getBundle(BC.Number, false)];
-    bool RegOut = LiveBundles[Bundles->getBundle(BC.Number, true)];
+    bool RegIn = LiveBundles[Bundles->getBundle(BC.Number, false)];
+    unsigned OutBundle = Bundles->getBundle(BC.Number, true);
+    bool RegOut = LiveBundles[OutBundle];
     unsigned Ins = 0;
 
     Cand.Intf.moveToBlock(BC.Number);
@@ -1619,10 +1639,26 @@ BlockFrequency RAGreedy::calcGlobalSplitCost(GlobalSplitCandidate &Cand,
       }
     }
 
-    if (BI.LiveIn)
+    if (BI.LiveIn) {
       Ins += RegIn != (BC.Entry == SpillPlacement::PrefReg);
-    if (BI.LiveOut)
+      bool InSpill = RegIn && BC.Entry != SpillPlacement::PrefReg;
+      if (InSpill) {
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
+      }
+    }
+    if (BI.LiveOut) {
       Ins += RegOut != (BC.Exit == SpillPlacement::PrefReg);
+      bool OutSpill = !RegOut && BC.Exit == SpillPlacement::PrefReg;
+      if (OutSpill) {
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
+      }
+    }
     while (Ins--)
       GlobalCost += SpillPlacer->getBlockFrequency(BC.Number);
   }
@@ -1876,6 +1912,8 @@ unsigned RAGreedy::calculateRegionSplitCost(LiveInterval &VirtReg,
                                             bool *CanCauseEvictionChain) {
   unsigned BestCand = NoCand;
   Order.rewind();
+  BlockFrequency BestCostCalc = BlockFrequency::getMaxFrequency();
+  BlockFrequency BestCostRepeatedSpillCost;
   while (unsigned PhysReg = Order.next()) {
     if (IgnoreCSR && isUnusedCalleeSavedReg(PhysReg))
       continue;
@@ -1907,13 +1945,14 @@ unsigned RAGreedy::calculateRegionSplitCost(LiveInterval &VirtReg,
 
     SpillPlacer->prepare(Cand.LiveBundles);
     BlockFrequency Cost;
-    if (!addSplitConstraints(Cand.Intf, Cost)) {
+    BlockFrequency RepeatedSpillCost;
+    if (!addSplitConstraints(Cand.Intf, Cost, RepeatedSpillCost)) {
       LLVM_DEBUG(dbgs() << printReg(PhysReg, TRI) << "\tno positive bundles\n");
       continue;
     }
     LLVM_DEBUG(dbgs() << printReg(PhysReg, TRI) << "\tstatic = ";
                MBFI->printBlockFreq(dbgs(), Cost));
-    if (Cost >= BestCost) {
+    if (Cost >= BestCostCalc) {
       LLVM_DEBUG({
         if (BestCand == NoCand)
           dbgs() << " worse than no bundles\n";
@@ -1937,7 +1976,8 @@ unsigned RAGreedy::calculateRegionSplitCost(LiveInterval &VirtReg,
     }
 
     bool HasEvictionChain = false;
-    Cost += calcGlobalSplitCost(Cand, Order, &HasEvictionChain);
+    Cost +=
+        calcGlobalSplitCost(Cand, Order, &HasEvictionChain, RepeatedSpillCost);
     LLVM_DEBUG({
       dbgs() << ", total = ";
       MBFI->printBlockFreq(dbgs(), Cost) << " with bundles";
@@ -1945,9 +1985,10 @@ unsigned RAGreedy::calculateRegionSplitCost(LiveInterval &VirtReg,
         dbgs() << " EB#" << i;
       dbgs() << ".\n";
     });
-    if (Cost < BestCost) {
+    if (Cost < BestCostCalc) {
       BestCand = NumCands;
-      BestCost = Cost;
+      BestCostCalc = Cost;
+      BestCostRepeatedSpillCost = RepeatedSpillCost;
       // See splitCanCauseEvictionChain for detailed description of bad
       // eviction chain scenarios.
       if (CanCauseEvictionChain)
@@ -1965,6 +2006,25 @@ unsigned RAGreedy::calculateRegionSplitCost(LiveInterval &VirtReg,
       LLVM_DEBUG(dbgs() << "not ");
     LLVM_DEBUG(dbgs() << "cause bad eviction chain\n");
   }
+  auto Accept = [&]() {
+    // No adjust, must smaller to accept.
+    if (BestCostRepeatedSpillCost.getFrequency() == 0)
+      return BestCostCalc < BestCost;
+    // Get the adjusted value.
+    BlockFrequency Adjust = BestCostCalc - BestCostRepeatedSpillCost;
+    uint64_t FreqQuantity = Adjust.getFrequency();
+    uint64_t BestCostQuantity = BestCost.getFrequency();
+    // Adjusted value greater is not acceptable.
+    if (FreqQuantity >= BestCostQuantity)
+      return false;
+    // Adjusted value must smaller than 12.5% to accept.
+    return (BestCostQuantity - FreqQuantity) > (BestCostQuantity >> 3);
+  };
+
+  if (!Accept()) {
+    return NoCand;
+  }
+  BestCost = BestCostCalc - BestCostRepeatedSpillCost;
 
   return BestCand;
 }
