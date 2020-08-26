@@ -741,12 +741,14 @@ MCRegister RAGreedy::tryEvict(const LiveInterval &VirtReg,
 /// that all preferences in SplitConstraints are met.
 /// Return false if there are no bundles with positive bias.
 bool RAGreedy::addSplitConstraints(InterferenceCache::Cursor Intf,
-                                   BlockFrequency &Cost) {
+                                   BlockFrequency &Cost,
+                                   BlockFrequency &RepeatedSpillCost) {
   ArrayRef<SplitAnalysis::BlockInfo> UseBlocks = SA->getUseBlocks();
 
   // Reset interference dependent info.
   SplitConstraints.resize(UseBlocks.size());
   BlockFrequency StaticCost = BlockFrequency(0);
+  unsigned LastSpillOutBundle = UINT_MAX;
   for (unsigned I = 0; I != UseBlocks.size(); ++I) {
     const SplitAnalysis::BlockInfo &BI = UseBlocks[I];
     SpillPlacement::BlockConstraint &BC = SplitConstraints[I];
@@ -788,14 +790,27 @@ bool RAGreedy::addSplitConstraints(InterferenceCache::Cursor Intf,
 
     // Interference for the live-out value.
     if (BI.LiveOut) {
+      unsigned OutBundle = Bundles->getBundle(BC.Number, true);
       if (Intf.last() >= SA->getLastSplitPoint(BC.Number)) {
         BC.Exit = SpillPlacement::MustSpill;
         ++Ins;
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
       } else if (Intf.last() > BI.LastInstr) {
         BC.Exit = SpillPlacement::PrefSpill;
         ++Ins;
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
       } else if (Intf.last() > BI.FirstInstr) {
         ++Ins;
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
       }
     }
 
@@ -961,7 +976,8 @@ bool RAGreedy::calcCompactRegion(GlobalSplitCandidate &Cand) {
 
   // The static split cost will be zero since Cand.Intf reports no interference.
   BlockFrequency Cost;
-  if (!addSplitConstraints(Cand.Intf, Cost)) {
+  BlockFrequency RepeatedSpillCost;
+  if (!addSplitConstraints(Cand.Intf, Cost, RepeatedSpillCost)) {
     LLVM_DEBUG(dbgs() << ", none.\n");
     return false;
   }
@@ -1008,23 +1024,42 @@ BlockFrequency RAGreedy::calcBlockSplitCost() {
 /// interference pattern in SplitConstraints.
 ///
 BlockFrequency RAGreedy::calcGlobalSplitCost(GlobalSplitCandidate &Cand,
-                                             const AllocationOrder &Order) {
+                                             const AllocationOrder &Order,
+                                             BlockFrequency &RepeatedSpillCost) {
   BlockFrequency GlobalCost = BlockFrequency(0);
   const BitVector &LiveBundles = Cand.LiveBundles;
   ArrayRef<SplitAnalysis::BlockInfo> UseBlocks = SA->getUseBlocks();
+  unsigned LastSpillOutBundle = UINT_MAX;
   for (unsigned I = 0; I != UseBlocks.size(); ++I) {
     const SplitAnalysis::BlockInfo &BI = UseBlocks[I];
     SpillPlacement::BlockConstraint &BC = SplitConstraints[I];
-    bool RegIn  = LiveBundles[Bundles->getBundle(BC.Number, false)];
-    bool RegOut = LiveBundles[Bundles->getBundle(BC.Number, true)];
+    bool RegIn = LiveBundles[Bundles->getBundle(BC.Number, false)];
+    unsigned OutBundle = Bundles->getBundle(BC.Number, true);
+    bool RegOut = LiveBundles[OutBundle];
     unsigned Ins = 0;
 
     Cand.Intf.moveToBlock(BC.Number);
 
-    if (BI.LiveIn)
+    if (BI.LiveIn) {
       Ins += RegIn != (BC.Entry == SpillPlacement::PrefReg);
-    if (BI.LiveOut)
+      bool InSpill = RegIn && BC.Entry != SpillPlacement::PrefReg;
+      if (InSpill) {
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
+      }
+    }
+    if (BI.LiveOut) {
       Ins += RegOut != (BC.Exit == SpillPlacement::PrefReg);
+      bool OutSpill = !RegOut && BC.Exit == SpillPlacement::PrefReg;
+      if (OutSpill) {
+        if (LastSpillOutBundle == UINT_MAX)
+          LastSpillOutBundle = OutBundle;
+        if (LastSpillOutBundle != OutBundle)
+          RepeatedSpillCost += SpillPlacer->getBlockFrequency(BC.Number);
+      }
+    }
     while (Ins--)
       GlobalCost += SpillPlacer->getBlockFrequency(BC.Number);
   }
@@ -1233,11 +1268,10 @@ MCRegister RAGreedy::tryRegionSplit(const LiveInterval &VirtReg,
   return doRegionSplit(VirtReg, BestCand, HasCompact, NewVRegs);
 }
 
-unsigned RAGreedy::calculateRegionSplitCostAroundReg(MCRegister PhysReg,
-                                                     AllocationOrder &Order,
-                                                     BlockFrequency &BestCost,
-                                                     unsigned &NumCands,
-                                                     unsigned &BestCand) {
+unsigned RAGreedy::calculateRegionSplitCostAroundReg(
+    MCRegister PhysReg, AllocationOrder &Order, BlockFrequency &BestCost,
+    unsigned &NumCands, unsigned &BestCand,
+    BlockFrequency &BestRepeatedSpillCost) {
   // Discard bad candidates before we run out of interference cache cursors.
   // This will only affect register classes with a lot of registers (>32).
   if (NumCands == IntfCache.getMaxCursors()) {
@@ -1265,7 +1299,8 @@ unsigned RAGreedy::calculateRegionSplitCostAroundReg(MCRegister PhysReg,
 
   SpillPlacer->prepare(Cand.LiveBundles);
   BlockFrequency Cost;
-  if (!addSplitConstraints(Cand.Intf, Cost)) {
+  BlockFrequency RepeatedSpillCost;
+  if (!addSplitConstraints(Cand.Intf, Cost, RepeatedSpillCost)) {
     LLVM_DEBUG(dbgs() << printReg(PhysReg, TRI) << "\tno positive bundles\n");
     return BestCand;
   }
@@ -1294,7 +1329,7 @@ unsigned RAGreedy::calculateRegionSplitCostAroundReg(MCRegister PhysReg,
     return BestCand;
   }
 
-  Cost += calcGlobalSplitCost(Cand, Order);
+  Cost += calcGlobalSplitCost(Cand, Order, RepeatedSpillCost);
   LLVM_DEBUG({
     dbgs() << ", total = " << printBlockFreq(*MBFI, Cost) << " with bundles";
     for (int I : Cand.LiveBundles.set_bits())
@@ -1304,6 +1339,7 @@ unsigned RAGreedy::calculateRegionSplitCostAroundReg(MCRegister PhysReg,
   if (Cost < BestCost) {
     BestCand = NumCands;
     BestCost = Cost;
+    BestRepeatedSpillCost = RepeatedSpillCost;
   }
   ++NumCands;
 
@@ -1316,14 +1352,34 @@ unsigned RAGreedy::calculateRegionSplitCost(const LiveInterval &VirtReg,
                                             unsigned &NumCands,
                                             bool IgnoreCSR) {
   unsigned BestCand = NoCand;
+  BlockFrequency BestCostCalc = BlockFrequency::max();
+  BlockFrequency BestCostRepeatedSpillCost;
   for (MCRegister PhysReg : Order) {
     assert(PhysReg);
     if (IgnoreCSR && EvictAdvisor->isUnusedCalleeSavedReg(PhysReg))
       continue;
 
-    calculateRegionSplitCostAroundReg(PhysReg, Order, BestCost, NumCands,
-                                      BestCand);
+    calculateRegionSplitCostAroundReg(PhysReg, Order, BestCostCalc, NumCands,
+                                      BestCand, BestCostRepeatedSpillCost);
   }
+  auto Accept = [&]() {
+    // No adjust, must smaller to accept.
+    if (BestCostRepeatedSpillCost.getFrequency() == 0)
+      return BestCostCalc < BestCost;
+    // Get the adjusted value.
+    BlockFrequency Adjust = BestCostCalc - BestCostRepeatedSpillCost;
+    uint64_t FreqQuantity = Adjust.getFrequency();
+    uint64_t BestCostQuantity = BestCost.getFrequency();
+    // Adjusted value greater is not acceptable.
+    if (FreqQuantity >= BestCostQuantity)
+      return false;
+    // Adjusted value must smaller than 12.5% to accept.
+    return (BestCostQuantity - FreqQuantity) > (BestCostQuantity >> 3);
+  };
+
+  if (!Accept())
+    return NoCand;
+  BestCost = BestCostCalc - BestCostRepeatedSpillCost;
 
   return BestCand;
 }
@@ -1448,7 +1504,9 @@ bool RAGreedy::trySplitAroundHintReg(MCRegister Hint,
   unsigned NumCands = 0;
   unsigned BestCand = NoCand;
   SA->analyze(&VirtReg);
-  calculateRegionSplitCostAroundReg(Hint, Order, Cost, NumCands, BestCand);
+  BlockFrequency RepeatedSpillCost;
+  calculateRegionSplitCostAroundReg(Hint, Order, Cost, NumCands, BestCand,
+                                    RepeatedSpillCost);
   if (BestCand == NoCand)
     return false;
 
