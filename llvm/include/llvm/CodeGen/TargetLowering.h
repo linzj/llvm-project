@@ -3458,7 +3458,6 @@ public:
     bool IsPatchPoint      : 1;
     bool IsDartCCall       : 1;
     bool IsJSSaveFP        : 1;
-    bool IsDartSharedStubCall : 1;
 
     // IsTailCall should be modified by implementations of
     // TargetLowering::LowerCall that perform tail call conversions.
@@ -3478,12 +3477,13 @@ public:
     SmallVector<SDValue, 32> OutVals;
     SmallVector<ISD::InputArg, 32> Ins;
     SmallVector<SDValue, 4> InVals;
+    StringRef CustomRegMask;
 
     CallLoweringInfo(SelectionDAG &DAG)
         : RetSExt(false), RetZExt(false), IsVarArg(false), IsInReg(false),
           DoesNotReturn(false), IsReturnValueUsed(true), IsConvergent(false),
-          IsPatchPoint(false), IsDartCCall(false), IsJSSaveFP(false),
-          IsDartSharedStubCall(false), DAG(DAG) {}
+          IsPatchPoint(false), IsDartCCall(false), IsJSSaveFP(false), DAG(DAG) {
+    }
 
     CallLoweringInfo &setDebugLoc(const SDLoc &dl) {
       DL = dl;
@@ -3605,8 +3605,8 @@ public:
       return *this;
     }
 
-    CallLoweringInfo &setDartSharedStubCall(bool Value = true) {
-      IsDartSharedStubCall = Value;
+    CallLoweringInfo &setCustomRegMask(StringRef Value) {
+      CustomRegMask = Value;
       return *this;
     }
 

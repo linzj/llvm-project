@@ -514,6 +514,48 @@ TargetRegisterInfo::lookThruCopyLike(unsigned SrcReg,
   }
 }
 
+const uint32_t *TargetRegisterInfo::UpdateRegMask(MachineFunction &MF,
+                                                  const uint32_t *Mask,
+                                                  StringRef Regs) const {
+  // First init the Names2Regs.
+  // Comes from MIRParser.
+  StringMap<unsigned> Names2Regs;
+  Names2Regs.insert(std::make_pair("noreg", 0));
+
+  for (unsigned I = 0, E = getNumRegs(); I < E; ++I) {
+    bool WasInserted =
+        Names2Regs.insert(std::make_pair(StringRef(getName(I)).lower(), I))
+            .second;
+    (void)WasInserted;
+    assert(WasInserted && "Expected registers to be unique case-insensitively");
+  }
+  SmallSet<unsigned, 32> RegNoSet;
+  while (!Regs.empty()) {
+    StringRef RegName;
+    std::tie(RegName, Regs) = Regs.split(",");
+    auto RegInfo = Names2Regs.find(RegName);
+
+    assert(RegInfo != Names2Regs.end() && "Unknown reg name");
+    RegNoSet.insert(RegInfo->second);
+  }
+  // Allocate new reg mask.
+  uint32_t *UpdatedMask = MF.allocateRegMask();
+  unsigned RegMaskSize = MachineOperand::getRegMaskSize(getNumRegs());
+  memcpy(UpdatedMask, Mask, sizeof(UpdatedMask[0]) * RegMaskSize);
+  // Update to new regmask.
+  for (unsigned I = 0, E = getNumRegs(); I < E; ++I) {
+    if (!RegNoSet.count(I))
+      continue;
+
+    for (MCSubRegIterator SubReg(I, this, true); SubReg.isValid(); ++SubReg) {
+      // See TargetRegisterInfo::getCallPreservedMask for how to interpret the
+      // register mask.
+      UpdatedMask[*SubReg / 32] |= 1u << (*SubReg % 32);
+    }
+  }
+  return UpdatedMask;
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD
 void TargetRegisterInfo::dumpReg(unsigned Reg, unsigned SubRegIndex,

@@ -986,6 +986,9 @@ public:
   inline Register getSubReg(MCRegister Reg, unsigned Idx) const {
     return static_cast<const MCRegisterInfo *>(this)->getSubReg(Reg, Idx);
   }
+
+  const uint32_t *UpdateRegMask(MachineFunction &MF, const uint32_t *Mask,
+                                StringRef Regs) const;
 };
 
 //===----------------------------------------------------------------------===//

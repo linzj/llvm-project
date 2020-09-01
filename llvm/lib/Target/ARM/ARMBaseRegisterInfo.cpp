@@ -137,8 +137,6 @@ ARMBaseRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
     return CSR_V8SBCC_RegMask;
   if (CC == CallingConv::V8FPSave)
     return CSR_V8FPSave_RegMask;
-  if (CC == CallingConv::DartSharedStub)
-    return CSR_Dart_Shared_Stub_RegMask;
   if (STI.getTargetLowering()->supportSwiftError() &&
       MF.getFunction().getAttributes().hasAttrSomewhere(Attribute::SwiftError))
     return STI.isTargetDarwin() ? CSR_iOS_SwiftError_RegMask

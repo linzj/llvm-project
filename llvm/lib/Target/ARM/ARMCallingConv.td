@@ -335,10 +335,6 @@ def CSR_V8FPSave: CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, R4,
 
 def CSR_V8SBCC : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, (sequence "D%u", 31, 0))>;
 
-def CSR_Dart_Shared_Stub : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6,
-                                           R5, R4, R3, R2, R1, R0,
-                                     (sequence "D%u", 31, 0))>;
-
 // R8 is used to pass swifterror, remove it from CSR.
 def CSR_AAPCS_SwiftError : CalleeSavedRegs<(sub CSR_AAPCS, R8)>;
 

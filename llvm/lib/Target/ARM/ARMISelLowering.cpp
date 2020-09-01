@@ -2172,7 +2172,6 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   // Add a register mask operand representing the call-preserved registers.
   bool IsCCallInsideJSSaveFP = false;
-  bool IsDartSharedStubCall = CLI.IsDartSharedStubCall;
 
   if (CLI.IsDartCCall)
     hasJSCCall = false;
@@ -2528,11 +2527,14 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       }
     } else if (IsCCallInsideJSSaveFP) {
       Mask = ARI->getCallPreservedMask(MF, CallingConv::V8FPSave);
-    } else if (IsDartSharedStubCall) {
-      Mask = ARI->getCallPreservedMask(MF, CallingConv::DartSharedStub);
-    } else
+    } else {
       Mask = ARI->getCallPreservedMask(MF, CallConv);
+    }
 
+    if (!CLI.CustomRegMask.empty()) {
+      const auto TRI = Subtarget->getRegisterInfo();
+      Mask = TRI->UpdateRegMask(MF, Mask, CLI.CustomRegMask);
+    }
     assert(Mask && "Missing call preserved mask for calling convention");
     Ops.push_back(DAG.getRegisterMask(Mask));
   }

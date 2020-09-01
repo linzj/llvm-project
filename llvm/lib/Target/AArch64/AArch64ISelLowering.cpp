@@ -4294,8 +4294,6 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Add a register mask operand representing the call-preserved registers.
   const uint32_t *Mask;
   const AArch64RegisterInfo *TRI = Subtarget->getRegisterInfo();
-  bool IsDartSharedStubCall = CLI.IsDartSharedStubCall;
-  bool IsDartCCall = CLI.IsDartCCall;
 
   if (IsThisReturn) {
     // For 'this' returns, use the X0-preserving mask if applicable
@@ -4304,16 +4302,15 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
       IsThisReturn = false;
       Mask = TRI->getCallPreservedMask(MF, CallConv);
     }
-  }
-  if (IsDartSharedStubCall) {
-    Mask = TRI->getCallPreservedMask(MF, CallingConv::DartSharedStub);
-  } else if (IsDartCCall) {
-    Mask = TRI->getCallPreservedMask(MF, CallingConv::DartCCall);
   } else
     Mask = TRI->getCallPreservedMask(MF, CallConv);
 
   if (Subtarget->hasCustomCallingConv())
     TRI->UpdateCustomCallPreservedMask(MF, &Mask);
+
+  if (!CLI.CustomRegMask.empty()) {
+    Mask = TRI->UpdateRegMask(MF, Mask, CLI.CustomRegMask);
+  }
 
   if (TRI->isAnyArgRegReserved(MF))
     TRI->emitReservedArgRegCallError(MF);
