@@ -2148,8 +2148,6 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     }
   }
 
-  bool IsDartSharedStubCall = CLI.IsDartSharedStubCall;
-
   if (CLI.IsDartCCall)
     hasJSCCall = false;
 
@@ -2708,10 +2706,12 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     }
   } else if (IsCCallInsideJSSaveFP) {
     Mask = ARI->getCallPreservedMask(MF, CallingConv::V8FPSave);
-  } else if (IsDartSharedStubCall) {
-    Mask = ARI->getCallPreservedMask(MF, CallingConv::DartSharedStub);
-  } else
+  } else {
     Mask = ARI->getCallPreservedMask(MF, CallConv);
+  }
+
+  if (!CLI.CustomRegMask.empty())
+    Mask = ARI->UpdateRegMask(MF, Mask, CLI.CustomRegMask);
 
   assert(Mask && "Missing call preserved mask for calling convention");
   Ops.push_back(DAG.getRegisterMask(Mask));

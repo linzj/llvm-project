@@ -11099,8 +11099,13 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setIsPreallocated(
           Call->countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0)
       .setDartCCall(Call->hasFnAttr("dart-c-call"))
-      .setDartSharedStubCall(Call->hasFnAttr("dart-shared-stub-call"))
       .setStatepointLiveOnly(Call->hasFnAttr("statepoint-live-only"));
+
+  if (Call->hasFnAttr("custom-regmask")) {
+    Attribute Attr = Call->getFnAttr("custom-regmask");
+    assert(Attr.isStringAttribute());
+    CLI.setCustomRegMask(Attr.getValueAsString());
+  }
 }
 
 /// Add a stack map intrinsic call's live variable operands to a stackmap

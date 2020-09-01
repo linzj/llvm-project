@@ -4884,7 +4884,6 @@ public:
     bool IsPreallocated : 1;
     bool NoMerge           : 1;
     bool IsDartCCall       : 1;
-    bool IsDartSharedStubCall : 1;
     bool IsStatepointLiveOnly : 1;
 
     // IsTailCall should be modified by implementations of
@@ -4911,12 +4910,13 @@ public:
 
     std::optional<PtrAuthInfo> PAI;
 
+    StringRef CustomRegMask;
+
     CallLoweringInfo(SelectionDAG &DAG)
         : RetSExt(false), RetZExt(false), IsVarArg(false), IsInReg(false),
           DoesNotReturn(false), IsReturnValueUsed(true), IsConvergent(false),
           IsPatchPoint(false), IsPreallocated(false), NoMerge(false),
-          IsDartCCall(false), IsDartSharedStubCall(false),
-          IsStatepointLiveOnly(false), DAG(DAG) {}
+          IsDartCCall(false), IsStatepointLiveOnly(false), DAG(DAG) {}
 
     CallLoweringInfo &setDebugLoc(const SDLoc &dl) {
       DL = dl;
@@ -5077,8 +5077,8 @@ public:
       return *this;
     }
 
-    CallLoweringInfo &setDartSharedStubCall(bool Value = true) {
-      IsDartSharedStubCall = Value;
+    CallLoweringInfo &setCustomRegMask(StringRef Value) {
+      CustomRegMask = Value;
       return *this;
     }
 
