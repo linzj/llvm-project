@@ -1856,21 +1856,6 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
     }
   }
 
-  if (!CanEliminateFrame) {
-    if (MF.getFunction().getCallingConv() == CallingConv::V8CC) {
-      SavedRegs.set(ARM::R11);
-      SavedRegs.set(ARM::LR);
-    }
-
-    if (AFI->isJSFunction()) {
-      SavedRegs.set(ARM::R0);
-      SavedRegs.set(ARM::R1);
-      SavedRegs.set(ARM::R7);
-    } else if (AFI->isWASM()) {
-      SavedRegs.set(ARM::R3);
-    }
-  }
-
   bool ForceLRSpill = false;
   if (!LRSpilled && AFI->isThumb1OnlyFunction()) {
     unsigned FnSize = EstimateFunctionSizeInBytes(MF, TII);
@@ -2130,6 +2115,24 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
     // Avoid spilling LR in Thumb1 if there's a tail call: it's expensive to
     // restore LR in that case.
     bool ExpensiveLRRestore = AFI->isThumb1OnlyFunction() && MFI.hasTailCall();
+    if (MF.getFunction().getCallingConv() == CallingConv::V8CC) {
+      if (!SavedRegs.test(FramePtr)) {
+        SavedRegs.set(FramePtr);
+        NumGPRSpills++;
+      }
+      if (!LRSpilled) {
+        SavedRegs.set(ARM::LR);
+        NumGPRSpills++;
+      }
+    }
+
+    if (AFI->isJSFunction()) {
+      SavedRegs.set(ARM::R0);
+      SavedRegs.set(ARM::R1);
+      SavedRegs.set(ARM::R7);
+    } else if (AFI->isWASM()) {
+      SavedRegs.set(ARM::R3);
+    }
 
     // If LR is not spilled, but at least one of R4, R5, R6, and R7 is spilled.
     // Spill LR as well so we can fold BX_RET to the registers restore (LDM).
