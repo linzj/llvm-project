@@ -977,7 +977,7 @@ static bool CheckIdxInsideLI(SlotIndex Idx, const LiveInterval &LI) {
 
 void InlineSpiller::foldStatePoints(unsigned InputReg) {
   SmallVector<unsigned, 8> WorkList;
-  std::unordered_set<unsigned> VisitedSet;
+  SmallDenseSet<unsigned> VisitedSet;
   // Don't add Reg to WorkList, spillAroundUses will handle it.
   for (MachineRegisterInfo::reg_bundle_iterator
            RegI = MRI.reg_bundle_begin(InputReg),
@@ -987,10 +987,10 @@ void InlineSpiller::foldStatePoints(unsigned InputReg) {
     unsigned SibReg = isFullCopyOf(MI, InputReg);
     if (SibReg && isSibling(SibReg) && SibReg != InputReg) {
       WorkList.push_back(SibReg);
-      VisitedSet.emplace(SibReg);
+      VisitedSet.insert(SibReg);
     }
   }
-  VisitedSet.emplace(InputReg);
+  VisitedSet.insert(InputReg);
   while (!WorkList.empty()) {
     unsigned Reg = WorkList.pop_back_val();
     // Fold the use of state point.
@@ -1001,7 +1001,7 @@ void InlineSpiller::foldStatePoints(unsigned InputReg) {
       MachineInstr &MI = *UI++;
       if (unsigned DstReg = isFullCopyOf(MI, Reg)) {
         if (isSibling(DstReg)) {
-          auto pair = VisitedSet.emplace(DstReg);
+          auto pair = VisitedSet.insert(DstReg);
           if (pair.second)
             WorkList.push_back(DstReg);
         }
