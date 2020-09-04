@@ -216,10 +216,6 @@ private:
   bool isSibling(Register Reg);
   bool hoistSpillInsideBB(LiveInterval &SpillLI, MachineInstr &CopyMI);
   void eliminateRedundantSpills(LiveInterval &LI, VNInfo *VNI);
-  /// Fold all the regs that related to InputReg and live through a
-  /// statepoint.
-  void foldStatePoints(Register Reg);
-  bool removeRegFromStatePoint(MachineInstr *MI, Register Reg);
 
   void markValueUsed(LiveInterval*, VNInfo*);
   bool canGuaranteeAssignmentAfterRemat(Register VReg, MachineInstr &MI);
@@ -746,11 +742,6 @@ bool InlineSpiller::reMaterializeFor(LiveInterval &VirtReg, MachineInstr &MI) {
     markValueUsed(&VirtReg, ParentVNI);
     LLVM_DEBUG(dbgs() << "\tcannot remat for " << UseIdx << '\t' << MI);
     return false;
-  }
-
-  if (MI.getOpcode() == TargetOpcode::STATEPOINT &&
-      removeRegFromStatePoint(&MI, VirtReg.reg())) {
-    return true;
   }
 
   // If the instruction also writes VirtReg.reg, it had better not require the
@@ -1303,104 +1294,11 @@ void InlineSpiller::insertSpill(Register NewVReg, bool isKill,
     HSpiller.addToMergeableSpills(*Spill, StackSlot, Original);
 }
 
-static bool CheckIdxInsideLI(SlotIndex Idx, const LiveInterval &LI) {
-  auto Segment = LI.FindSegmentContaining(Idx.getPrevSlot());
-  if (LI.end() == Segment) {
-    return false;
-  }
-  return true;
-}
-
-void InlineSpiller::foldStatePoints(Register InputReg) {
-  SmallVector<Register, 8> WorkList;
-  SmallDenseSet<Register> VisitedSet;
-  // Don't add Reg to WorkList, spillAroundUses will handle it.
-  for (MachineRegisterInfo::reg_bundle_iterator
-           RegI = MRI.reg_bundle_begin(InputReg),
-           E = MRI.reg_bundle_end();
-       RegI != E;) {
-    MachineInstr &MI = *RegI++;
-    Register SibReg = isCopyOfBundle(MI, InputReg, TII);
-    if (SibReg && isSibling(SibReg) && SibReg != InputReg) {
-      WorkList.push_back(SibReg);
-      VisitedSet.insert(SibReg);
-    }
-  }
-  VisitedSet.insert(InputReg);
-  while (!WorkList.empty()) {
-    Register Reg = WorkList.pop_back_val();
-    // Fold the use of state point.
-    for (MachineRegisterInfo::use_instr_nodbg_iterator
-             UI = MRI.use_instr_nodbg_begin(Reg),
-             E = MRI.use_instr_nodbg_end();
-         UI != E;) {
-      MachineInstr &MI = *UI++;
-      if (Register DstReg = isCopyOfBundle(MI, Reg, TII)) {
-        if (isSibling(DstReg)) {
-          auto pair = VisitedSet.insert(DstReg);
-          if (pair.second)
-            WorkList.push_back(DstReg);
-        }
-        continue;
-      }
-      // Handle STATEPOINT, PATCHPOINT
-      switch (MI.getOpcode()) {
-      case TargetOpcode::STATEPOINT: {
-        // Ignore the Reg not located in the MI's var range.
-        StatepointOpers SOpers(&MI);
-        unsigned VarIdx = SOpers.getVarIdx();
-        unsigned i;
-        for (i = MI.getNumOperands(); i > VarIdx; --i) {
-          MachineOperand &MO = MI.getOperand(i - 1);
-          if (!MO.isReg())
-            continue;
-          if (MO.getReg() == Reg) {
-            break;
-          }
-        }
-        if (i == VarIdx)
-          continue;
-        // Ignore if the input reg's live range does not contain
-        // the MI.
-        SlotIndex Idx = LIS.getInstructionIndex(MI).getRegSlot();
-        // Check both to ensure the case that reloads for STATEPOINT.
-        if (!CheckIdxInsideLI(Idx, *StackInt)) {
-          continue;
-        }
-        // Analyze instruction.
-        SmallVector<std::pair<MachineInstr *, unsigned>, 8> Ops;
-        AnalyzeVirtRegInBundle(MI, Reg, &Ops);
-        foldMemoryOperand(Ops);
-      } break;
-      default:
-        break;
-      }
-    }
-  }
-}
-
-bool InlineSpiller::removeRegFromStatePoint(MachineInstr *MI, Register Reg) {
-  StatepointOpers SOpers(MI);
-  unsigned VarIdx = SOpers.getVarIdx();
-  bool removed = false;
-  for (unsigned i = MI->getNumOperands(); i > VarIdx; --i) {
-    MachineOperand &MO = MI->getOperand(i - 1);
-    if (!MO.isReg())
-      continue;
-    if (MO.getReg() == Reg) {
-      MI->removeOperand(i - 1);
-      removed = true;
-    }
-  }
-  return removed;
-}
-
 /// spillAroundUses - insert spill code around each use of Reg.
 void InlineSpiller::spillAroundUses(Register Reg) {
   LLVM_DEBUG(dbgs() << "spillAroundUses " << printReg(Reg) << '\n');
   LiveInterval &OldLI = LIS.getInterval(Reg);
 
-  foldStatePoints(Reg);
   // Iterate over instructions using Reg.
   for (MachineInstr &MI : llvm::make_early_inc_range(MRI.reg_bundles(Reg))) {
     // Debug values are not allowed to affect codegen.

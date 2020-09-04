@@ -73,6 +73,14 @@ public:
     MCRegister AssignedPhys; // NoReg if absent.
   };
 
+  /// The entry type of a patch point reg.
+  /// Record the spill info.
+  struct PatchpointRegInfo {
+    Register Reg;
+    unsigned SpillSize;
+    unsigned SpillOffset;
+  };
+
 private:
   MachineFunction *MF;
   SmallPtrSet<Delegate *, 1> TheDelegates;
@@ -162,6 +170,11 @@ private:
   /// allowed to have virtual registers associated with them, stored in the
   /// second element.
   std::vector<std::pair<MCRegister, Register>> LiveIns;
+
+  /// Record the original Reg and its spill info for a patch point.
+  using PatchpointIDMapType =
+      DenseMap<uint64_t, SmallVector<PatchpointRegInfo, 8>>;
+  PatchpointIDMapType PatchpointIDMap;
 
 public:
   LLVM_ABI explicit MachineRegisterInfo(MachineFunction *MF);
@@ -1043,9 +1056,8 @@ public:
   /// corresponding live-in virtual register.
   LLVM_ABI Register getLiveInVirtReg(MCRegister PReg) const;
 
-  /// updateVirtRegIfLivein - If a VReg is a live-in virtual register, update
-  /// it to VNewReg.
-  void updateVirtRegIfLivein(unsigned VReg, unsigned VNewReg);
+  /// updateJoinCopy - update the VReg to VNewReg after joinCopy.
+  void updateJoinCopy(unsigned VReg, unsigned VNewReg);
 
   /// EmitLiveInCopies - Emit copies to initialize livein virtual registers
   /// into the given entry block.
@@ -1257,6 +1269,8 @@ public:
 
     MachineInstr *operator->() const { return &operator*(); }
   };
+
+  PatchpointIDMapType &getPatchpointIDMap() { return PatchpointIDMap; }
 };
 
 /// Iterate over the pressure sets affected by the given physical or virtual
