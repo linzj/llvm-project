@@ -1,4 +1,4 @@
-//===- StatepointLowering.cpp - Lower Statepoint related instrs -------===//
+//===- StatepointMachinePasses.cpp - Simplify Statepoint related instrs ---===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -31,15 +31,15 @@
 #include <string>
 #include <unordered_set>
 
-#define DEBUG_TYPE "statepoint-lowering"
+#define DEBUG_TYPE "statepoint-simplified"
 using namespace llvm;
 namespace {
 
-class StatepointLowering : public MachineFunctionPass {
+class StatepointSimplify : public MachineFunctionPass {
 public:
-  StatepointLowering();
+  StatepointSimplify();
 
-  StringRef getPassName() const override { return "Statepoint Lowering"; }
+  StringRef getPassName() const override { return "Statepoint Simplified"; }
 
   bool runOnMachineFunction(MachineFunction &MF) override;
 
@@ -101,24 +101,24 @@ static bool shouldFoldAsConstant(const MachineOperand &MO,
 
 } // end of anonymous namespace
 
-INITIALIZE_PASS(StatepointLowering, "statepoint-lowering",
-                "Statepoint lowering", false, false)
+INITIALIZE_PASS(StatepointSimplify, "statepoint-simplify",
+                "Statepoint Simplify", false, false)
 
-char StatepointLowering::ID = 0;
+char StatepointSimplify::ID = 0;
 
-StatepointLowering::StatepointLowering()
+StatepointSimplify::StatepointSimplify()
     : MachineFunctionPass(ID), MRI(nullptr), TII(nullptr) {
   PassRegistry &Registry = *PassRegistry::getPassRegistry();
-  initializeStatepointLoweringPass(Registry);
+  initializeStatepointSimplifyPass(Registry);
 }
 
-bool StatepointLowering::runOnMachineFunction(MachineFunction &MF) {
+bool StatepointSimplify::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = foldRelocateDef(MF);
   Changed |= removeMoveImmediateFromPatchpoint(MF);
   return Changed;
 }
 
-bool StatepointLowering::foldRelocateDef(MachineFunction &MF) {
+bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   MRI = &MF.getRegInfo();
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   TII = STI.getInstrInfo();
@@ -222,7 +222,7 @@ bool StatepointLowering::foldRelocateDef(MachineFunction &MF) {
   return !RemoveSet.empty();
 }
 
-bool StatepointLowering::removeMoveImmediateFromPatchpoint(
+bool StatepointSimplify::removeMoveImmediateFromPatchpoint(
     MachineFunction &MF) {
   bool Changed = false;
   SmallVector<MachineInstr *, 8> WorkList;
@@ -244,7 +244,7 @@ bool StatepointLowering::removeMoveImmediateFromPatchpoint(
   return Changed;
 }
 
-bool StatepointLowering::removeMoveImmediateFromPatchpoint(
+bool StatepointSimplify::removeMoveImmediateFromPatchpoint(
     MachineFunction &MF, MachineInstr *PatchPoint) {
   unsigned StartIdx = 0;
   bool Changed = false;
@@ -293,7 +293,7 @@ bool StatepointLowering::removeMoveImmediateFromPatchpoint(
   return Changed;
 }
 
-void StatepointLowering::replaceDstWithSrc(unsigned Dst, unsigned Src) {
+void StatepointSimplify::replaceDstWithSrc(unsigned Dst, unsigned Src) {
   LLVM_DEBUG(dbgs() << "Replace the use of " << printReg(Dst) << " with "
                     << printReg(Src) << "\n");
   for (auto it = MRI->use_begin(Dst); it != MRI->use_end();) {
@@ -305,6 +305,6 @@ void StatepointLowering::replaceDstWithSrc(unsigned Dst, unsigned Src) {
   }
 }
 
-FunctionPass *llvm::createStatepointLoweringPass() {
-  return new StatepointLowering();
+FunctionPass *llvm::createStatepointSimplifyPass() {
+  return new StatepointSimplify();
 }

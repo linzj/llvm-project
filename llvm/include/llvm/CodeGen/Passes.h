@@ -431,7 +431,7 @@ namespace llvm {
   FunctionPass *createRegUsageInfoPropPass();
 
   /// Lower state point related machine instructions, like RELOCATE_DEF.
-  FunctionPass *createStatepointLoweringPass();
+  FunctionPass *createStatepointSimplifyPass();
 
   /// This pass performs software pipelining on machine instructions.
   extern char &MachinePipelinerID;
