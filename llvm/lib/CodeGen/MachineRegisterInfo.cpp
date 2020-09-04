@@ -464,12 +464,15 @@ unsigned MachineRegisterInfo::getLiveInVirtReg(unsigned PReg) const {
   return 0;
 }
 
-void MachineRegisterInfo::updateVirtRegIfLivein(unsigned VReg,
-                                                unsigned VNewReg) {
+void MachineRegisterInfo::updateJoinCopy(unsigned VReg, unsigned VNewReg) {
   for (auto I = LiveIns.begin(), E = LiveIns.end(); I != E; ++I)
     if (I->second == VReg) {
       I->second = VNewReg;
     }
+  for (auto I = PatchpointIDMap.begin(), E = PatchpointIDMap.end(); I != E; ++I)
+    for (auto J = I->second.begin(), JE = I->second.end(); J != JE; ++J)
+      if (J->Reg == VReg)
+        J->Reg = VNewReg;
 }
 
 /// EmitLiveInCopies - Emit copies to initialize livein virtual registers

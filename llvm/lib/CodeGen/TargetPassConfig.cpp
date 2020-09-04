@@ -898,7 +898,8 @@ void TargetPassConfig::addMachinePasses() {
   if (TM->Options.EnableIPRA)
     addPass(createRegUsageInfoPropPass());
 
-  addPass(createStatepointSimplifyPass());
+  if (getOptimizeRegAlloc())
+    addPass(createStatepointSimplifyPass());
   // Run pre-ra passes.
   addPreRegAlloc();
 
@@ -1109,6 +1110,7 @@ bool TargetPassConfig::addRegAssignmentOptimized() {
   // Allow targets to change the register assignments before rewriting.
   addPreRewrite();
 
+  addPass(createStatepointRewritePass());
   // Finally rewrite virtual registers.
   addPass(&VirtRegRewriterID);
   // Perform stack slot coloring and post-ra machine LICM.

@@ -430,8 +430,10 @@ namespace llvm {
   /// if available with PysicalRegisterUsageInfo pass.
   FunctionPass *createRegUsageInfoPropPass();
 
-  /// Lower state point related machine instructions, like RELOCATE_DEF.
+  /// Simplify state point related machine instructions, like RELOCATE_DEF.
   FunctionPass *createStatepointSimplifyPass();
+  /// Rewrite the statepoints with the stack slot they should be interested in.
+  FunctionPass *createStatepointRewritePass();
 
   /// This pass performs software pipelining on machine instructions.
   extern char &MachinePipelinerID;

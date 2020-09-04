@@ -60,6 +60,14 @@ public:
     virtual void MRI_NoteNewVirtualRegister(unsigned Reg) = 0;
   };
 
+  /// The entry type of a patch point reg.
+  /// Record the spill info.
+  struct PatchpointRegInfo {
+    Register Reg;
+    unsigned SpillSize;
+    unsigned SpillOffset;
+  };
+
 private:
   MachineFunction *MF;
   Delegate *TheDelegate = nullptr;
@@ -144,6 +152,11 @@ private:
   /// allowed to have virtual registers associated with them, stored in the
   /// second element.
   std::vector<std::pair<unsigned, unsigned>> LiveIns;
+
+  /// Record the original Reg and its spill info for a patch point.
+  using PatchpointIDMapType =
+      DenseMap<uint64_t, SmallVector<PatchpointRegInfo, 8>>;
+  PatchpointIDMapType PatchpointIDMap;
 
 public:
   explicit MachineRegisterInfo(MachineFunction *MF);
@@ -949,9 +962,8 @@ public:
   /// corresponding live-in physical register.
   unsigned getLiveInVirtReg(unsigned PReg) const;
 
-  /// updateVirtRegIfLivein - If a VReg is a live-in virtual register, update
-  /// it to VNewReg.
-  void updateVirtRegIfLivein(unsigned VReg, unsigned VNewReg);
+  /// updateJoinCopy - update the VReg to VNewReg after joinCopy.
+  void updateJoinCopy(unsigned VReg, unsigned VNewReg);
 
   /// EmitLiveInCopies - Emit copies to initialize livein virtual registers
   /// into the given entry block.
@@ -1166,6 +1178,8 @@ public:
 
     MachineInstr *operator->() const { return &operator*(); }
   };
+
+  PatchpointIDMapType &getPatchpointIDMap() { return PatchpointIDMap; }
 };
 
 /// Iterate over the pressure sets affected by the given physical or virtual

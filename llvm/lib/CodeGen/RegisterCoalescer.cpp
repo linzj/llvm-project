@@ -1996,7 +1996,7 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
   // Update regalloc hint.
   TRI->updateRegAllocHint(CP.getSrcReg(), CP.getDstReg(), *MF);
 
-  MRI->updateVirtRegIfLivein(CP.getSrcReg(), CP.getDstReg());
+  MRI->updateJoinCopy(CP.getSrcReg(), CP.getDstReg());
 
   LLVM_DEBUG({
     dbgs() << "\tSuccess: " << printReg(CP.getSrcReg(), TRI, CP.getSrcIdx())
