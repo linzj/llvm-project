@@ -192,12 +192,8 @@ void SplitAnalysis::analyzeUses() {
     DidRepairRange = true;
     ++NumRepairs;
     LLVM_DEBUG(dbgs() << "*** Fixing inconsistent live interval! ***\n");
-    SmallVector<MachineInstr *, 8> DeadDefs;
     const_cast<LiveIntervals&>(LIS)
-      .shrinkToUses(const_cast<LiveInterval*>(CurLI), &DeadDefs);
-    for (MachineInstr *MI : DeadDefs) {
-      MI->setDesc(TII.get(TargetOpcode::KILL));
-    }
+      .shrinkToUses(const_cast<LiveInterval*>(CurLI));
     UseBlocks.clear();
     ThroughBlocks.clear();
     bool fixed = calcLiveBlockInfo();
