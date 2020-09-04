@@ -232,7 +232,7 @@ add_llvm_component_library(LLVMCodeGen
   StackMaps.cpp
   StackProtector.cpp
   StackSlotColoring.cpp
-  StatepointLowering.cpp
+  StatepointMachinePasses.cpp
   StaticDataSplitter.cpp
   StaticDataAnnotator.cpp
   SwiftErrorValueTracking.cpp
