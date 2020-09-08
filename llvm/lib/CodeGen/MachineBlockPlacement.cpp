@@ -1681,6 +1681,12 @@ MachineBlockPlacement::selectBestSuccessor(const MachineBasicBlock *BB,
   if (FoundEdge != ComputedEdges.end()) {
     BlockAndTailDupResult Result = FoundEdge->second;
     ComputedEdges.erase(FoundEdge);
+    BlockFrequency SuccFreq = MBFI->getBlockFreq(Result.BB);
+    BlockFrequency EntryFreq = MBFI->getEntryFreq();
+    const BranchProbability ColdProb(1, 10); // 10%
+    BlockFrequency WeightedEntryFreq = EntryFreq * ColdProb;
+    if (SuccFreq < WeightedEntryFreq)
+      return BestSucc;
     BlockChain *SuccChain = BlockToChain[Result.BB];
     if (BB->isSuccessor(Result.BB) &&
         (!BlockFilter || BlockFilter->count(Result.BB)) &&
