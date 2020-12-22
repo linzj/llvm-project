@@ -3204,7 +3204,7 @@ static bool TryToSinkInstruction(Instruction *I, BasicBlock *DestBlock) {
   if (auto *CI = dyn_cast<IntrinsicInst>(I)) {
     Intrinsic::ID IID = CI->getIntrinsicID();
     if (IID == Intrinsic::experimental_gc_exception ||
-        Intrinsic::experimental_gc_exception_data)
+        IID == Intrinsic::experimental_gc_exception_data)
       return false;
   }
 
