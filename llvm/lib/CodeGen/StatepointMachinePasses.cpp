@@ -10,7 +10,7 @@
 // To be written.
 //
 //===----------------------------------------------------------------------===//
-#include "llvm/CodeGen/LiveInterval.h"
+#include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveStacks.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -82,6 +82,7 @@ private:
   bool rewritePatchpoints(MachineFunction &);
   bool rewritePatchpoint(MachineFunction &, MachineInstr *MI);
   SlotIndexes *Indexes;
+  LiveIntervals *LIS;
   LiveStacks *LSS;
   VirtRegMap *VRM;
 };
@@ -319,6 +320,7 @@ char StatepointRewrite::ID = 0;
 INITIALIZE_PASS_BEGIN(StatepointRewrite, DEBUG_TYPE,
                       "Rewrite Statepoints PostRA", false, false)
 INITIALIZE_PASS_DEPENDENCY(SlotIndexes)
+INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
 INITIALIZE_PASS_DEPENDENCY(LiveStacks)
 INITIALIZE_PASS_DEPENDENCY(VirtRegMap)
 INITIALIZE_PASS_END(StatepointRewrite, DEBUG_TYPE, "Rewrite Statepoints PostRA",
@@ -330,6 +332,7 @@ StatepointRewrite::StatepointRewrite()
 void StatepointRewrite::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
   AU.addRequired<SlotIndexes>();
+  AU.addRequired<LiveIntervals>();
   AU.addRequired<LiveStacks>();
   AU.addRequired<VirtRegMap>();
   MachineFunctionPass::getAnalysisUsage(AU);
@@ -337,6 +340,7 @@ void StatepointRewrite::getAnalysisUsage(AnalysisUsage &AU) const {
 
 bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
   Indexes = &getAnalysis<SlotIndexes>();
+  LIS = &getAnalysis<LiveIntervals>();
   LSS = &getAnalysis<LiveStacks>();
   VRM = &getAnalysis<VirtRegMap>();
   return rewritePatchpoints(MF);
@@ -409,21 +413,43 @@ bool StatepointRewrite::rewritePatchpoint(MachineFunction &MF,
   // Check Any Stack Slot overlaps this PatchPoint.
   SlotIndex Index = Indexes->getInstructionIndex(*PatchPoint);
   const auto &RegInfoVector = Found->second;
+  auto AddStackSlot =
+      [&](const MachineRegisterInfo::PatchpointRegInfo &RegInfo) {
+        int StackSlot = VRM->getStackSlot(RegInfo.Reg);
+        if (StackSlot == VirtRegMap::NO_STACK_SLOT)
+          return;
+        LiveInterval &Interval = LSS->getInterval(StackSlot);
+        if (!Interval.liveAt(Index))
+          return;
+        // Add the Stack Slot Info.
+        MIB.addImm(StackMaps::IndirectMemRefOp);
+        MIB.addImm(RegInfo.SpillSize);
+        MIB.addFrameIndex(StackSlot);
+        MIB.addImm(RegInfo.SpillOffset);
+      };
+
+  auto AddPhysIfLiveOut = [&](Register Reg) {
+    if (!VRM->hasPhys(Reg))
+      return false;
+    if (!LIS->hasInterval(Reg) || !LIS->getInterval(Reg).liveAt(Index))
+      return false;
+    MIB.addReg(VRM->getPhys(Reg));
+    return true;
+  };
+
   for (const auto &RegInfo : RegInfoVector) {
     if (Register::isPhysicalRegister(RegInfo.Reg))
       continue;
     assert(VRM->getOriginal(RegInfo.Reg) == RegInfo.Reg);
-    int StackSlot = VRM->getStackSlot(RegInfo.Reg);
-    if (StackSlot == VirtRegMap::NO_STACK_SLOT)
+    AddStackSlot(RegInfo);
+    // Add live phys registers to MIB if targeted.
+    if (AddPhysIfLiveOut(RegInfo.Reg))
       continue;
-    LiveInterval &Interval = LSS->getInterval(StackSlot);
-    if (!Interval.liveAt(Index))
-      continue;
-    // Add the Stack Slot Info.
-    MIB.addImm(StackMaps::IndirectMemRefOp);
-    MIB.addImm(RegInfo.SpillSize);
-    MIB.addFrameIndex(StackSlot);
-    MIB.addImm(RegInfo.SpillOffset);
+    const auto &split = VRM->collectSplitRegs(RegInfo.Reg);
+    for (auto Reg : split) {
+      if (AddPhysIfLiveOut(Reg))
+        break;
+    }
   }
   MachineBasicBlock *MBB = PatchPoint->getParent();
   MachineBasicBlock::iterator Pos = PatchPoint;

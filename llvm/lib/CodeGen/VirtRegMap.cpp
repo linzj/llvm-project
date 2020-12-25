@@ -155,6 +155,19 @@ void VirtRegMap::print(raw_ostream &OS, const Module*) const {
   OS << '\n';
 }
 
+SmallVector<Register, 4> VirtRegMap::collectSplitRegs(Register original) {
+  assert(original == getOriginal(original));
+  SmallVector<Register, 4> result;
+
+  using Size_t = decltype(Virt2SplitMap.size());
+  for (Size_t i = 0, size = Virt2SplitMap.size(); i != size; ++i) {
+    Register VReg = Register::index2VirtReg(i);
+    if (Virt2SplitMap[VReg] == original)
+      result.emplace_back(VReg);
+  }
+  return result;
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD void VirtRegMap::dump() const {
   print(dbgs());

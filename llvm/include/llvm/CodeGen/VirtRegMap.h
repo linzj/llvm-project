@@ -176,6 +176,10 @@ class TargetInstrInfo;
     /// the specified stack slot
     void assignVirt2StackSlot(Register virtReg, int SS);
 
+    /// Collect the Register list that split from original.
+    SmallVector<Register, 4> collectSplitRegs(Register original);
+
+
     void print(raw_ostream &OS, const Module* M = nullptr) const override;
     void dump() const;
   };
