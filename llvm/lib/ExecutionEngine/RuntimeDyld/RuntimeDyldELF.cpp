@@ -2994,10 +2994,8 @@ bool RuntimeDyldELF::relocationNeedsGot(const RelocationRef &R) const {
 }
 
 bool RuntimeDyldELF::relocationNeedsStub(const RelocationRef &R) const {
-  if (Arch == Triple::aarch64 || Arch == Triple::aarch64_be)
-    return false;
   if (Arch != Triple::x86_64)
-    return true; // Conservative answer
+    return true;  // Conservative answer
 
   switch (R.getType()) {
   default:
