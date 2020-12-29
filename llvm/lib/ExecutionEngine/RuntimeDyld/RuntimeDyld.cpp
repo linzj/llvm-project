@@ -354,12 +354,8 @@ RuntimeDyldImpl::loadObjectImpl(const object::ObjectFile &Obj) {
       return RelSecOrErr.takeError();
 
     section_iterator RelocatedSection = *RelSecOrErr;
-    if (RelocatedSection == SE) {
-      if (ProcessAllSections &&
-          findOrEmitSection(Obj, *SI, false, LocalSections)) {
-      }
+    if (RelocatedSection == SE)
       continue;
-    }
 
     relocation_iterator I = SI->relocation_begin();
     relocation_iterator E = SI->relocation_end();
@@ -808,7 +804,6 @@ RuntimeDyldImpl::emitSection(const ObjectFile &Obj,
 
   uintptr_t Allocate;
   unsigned SectionID = Sections.size();
-  unsigned RealSectionID = Section.getIndex();
   uint8_t *Addr;
   const char *pData = nullptr;
 
@@ -838,10 +833,10 @@ RuntimeDyldImpl::emitSection(const ObjectFile &Obj,
     Allocate = DataSize + PaddingSize + StubBufSize;
     if (!Allocate)
       Allocate = 1;
-    Addr = IsCode ? MemMgr.allocateCodeSection(Allocate, Alignment,
-                                               RealSectionID, Name)
-                  : MemMgr.allocateDataSection(Allocate, Alignment,
-                                               RealSectionID, Name, IsReadOnly);
+    Addr = IsCode ? MemMgr.allocateCodeSection(Allocate, Alignment, SectionID,
+                                               Name)
+                  : MemMgr.allocateDataSection(Allocate, Alignment, SectionID,
+                                               Name, IsReadOnly);
     if (!Addr)
       report_fatal_error("Unable to allocate section memory!");
 
@@ -1268,9 +1263,7 @@ RuntimeDyld::RuntimeDyld(RuntimeDyld::MemoryManager &MemMgr,
   // they share a single memory manager.  This can become a problem when page
   // permissions are applied.
   Dyld = nullptr;
-  // UC_BUILD
-  // ProcessAllSections = false;
-  ProcessAllSections = true;
+  ProcessAllSections = false;
 }
 
 RuntimeDyld::~RuntimeDyld() {}
