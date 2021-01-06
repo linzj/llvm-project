@@ -518,8 +518,18 @@ bool MachineCSE::ProcessBlockCSE(MachineBasicBlock *MBB) {
     MachineInstr *MI = &*I;
     ++I;
 
-    if (!isCSECandidate(MI))
+    if (!isCSECandidate(MI)) {
+      switch (MI->getOpcode()) {
+      case TargetOpcode::STATEPOINT:
+      case TargetOpcode::PATCHPOINT:
+      case TargetOpcode::TCPATCHPOINT:
+      case TargetOpcode::STACKMAP:
+        if (PerformTrivialCopyPropagation(MI, MBB))
+          Changed = true;
+        break;
+      }
       continue;
+    }
 
     bool FoundCSE = VNT.count(MI);
     if (!FoundCSE) {
