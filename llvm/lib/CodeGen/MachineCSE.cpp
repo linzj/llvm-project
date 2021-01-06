@@ -530,8 +530,18 @@ bool MachineCSEImpl::ProcessBlockCSE(MachineBasicBlock *MBB) {
   SmallVector<unsigned, 2> ImplicitDefsToUpdate;
   SmallVector<Register, 2> ImplicitDefs;
   for (MachineInstr &MI : llvm::make_early_inc_range(*MBB)) {
-    if (!isCSECandidate(&MI))
+    if (!isCSECandidate(&MI)) {
+      switch (MI.getOpcode()) {
+      case TargetOpcode::STATEPOINT:
+      case TargetOpcode::PATCHPOINT:
+      case TargetOpcode::TCPATCHPOINT:
+      case TargetOpcode::STACKMAP:
+        if (PerformTrivialCopyPropagation(&MI, MBB))
+          Changed = true;
+        break;
+      }
       continue;
+    }
 
     bool FoundCSE = VNT.count(&MI);
     if (!FoundCSE) {
