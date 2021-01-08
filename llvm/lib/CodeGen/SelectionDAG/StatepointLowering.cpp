@@ -655,8 +655,10 @@ SDValue SelectionDAGBuilder::LowerAsSTATEPOINT(
   // input.  Also has the effect of removing duplicates in the original
   // llvm::Value input list as well.  This is a useful optimization for
   // reducing the size of the StackMap section.  It has no other impact.
-  removeDuplicateGCPtrs(SI.Bases, SI.Ptrs, SI.GCRelocates, *this,
-                        FuncInfo.StatepointSpillMaps[SI.StatepointInstr]);
+  bool ShouldRemove = SI.CLI.CallConv != CallingConv::V8CC;
+  if (ShouldRemove)
+    removeDuplicateGCPtrs(SI.Bases, SI.Ptrs, SI.GCRelocates, *this,
+                          FuncInfo.StatepointSpillMaps[SI.StatepointInstr]);
   assert(SI.Bases.size() == SI.Ptrs.size() &&
          SI.Ptrs.size() == SI.GCRelocates.size());
 
