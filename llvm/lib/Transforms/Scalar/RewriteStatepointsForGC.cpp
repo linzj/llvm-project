@@ -334,6 +334,13 @@ static bool isHandledGCPointerType(Type *T, GCStrategy *GC) {
   if (auto VT = dyn_cast<VectorType>(T))
     if (isGCPointerType(VT->getElementType(), GC))
       return true;
+  if (auto VT = dyn_cast<StructType>(T)) {
+    for (auto It = VT->element_begin(), End = VT->element_end(); It != End;
+         ++It) {
+      if (isGCPointerType(*It))
+        return true;
+    }
+  }
   return false;
 }
 
