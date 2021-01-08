@@ -524,6 +524,10 @@ static BaseDefiningValueResult findBaseDefiningValue(Value *I) {
     assert(cast<PointerType>(Def->getType())->getAddressSpace() ==
                cast<PointerType>(CI->getType())->getAddressSpace() &&
            "unsupported addrspacecast");
+
+    if (isa<IntToPtrInst>(Def))
+      return BaseDefiningValueResult(I, true);
+
     // If we find a cast instruction here, it means we've found a cast which is
     // not simply a pointer cast (i.e. an inttoptr).  We don't know how to
     // handle int->ptr conversion.
@@ -648,6 +652,9 @@ static bool isKnownBaseResult(Value *V) {
     // that this is a base value.
     return true;
   }
+
+  if (isa<IntToPtrInst>(V))
+    return true;
 
   // We need to keep searching
   return false;
