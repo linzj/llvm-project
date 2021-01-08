@@ -562,6 +562,13 @@ static Value *findBaseDefiningValue(Value *I, DefiningValueMapTy &Cache,
     assert(cast<PointerType>(Def->getType())->getAddressSpace() ==
                cast<PointerType>(CI->getType())->getAddressSpace() &&
            "unsupported addrspacecast");
+
+    if (isa<IntToPtrInst>(Def)) {
+      Cache[CI] = CI;
+      setKnownBase(CI, /* IsKnownBase */ true, KnownBases);
+      return CI;
+    }
+
     // If we find a cast instruction here, it means we've found a cast which is
     // not simply a pointer cast (i.e. an inttoptr).  We don't know how to
     // handle int->ptr conversion.
