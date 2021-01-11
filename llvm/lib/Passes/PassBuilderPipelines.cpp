@@ -131,6 +131,7 @@
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 #include "llvm/Transforms/Scalar/NewGVN.h"
 #include "llvm/Transforms/Scalar/Reassociate.h"
+#include "llvm/Transforms/Scalar/RewriteStatepointsForGC.h"
 #include "llvm/Transforms/Scalar/SCCP.h"
 #include "llvm/Transforms/Scalar/SROA.h"
 #include "llvm/Transforms/Scalar/SimpleLoopUnswitch.h"
@@ -1126,6 +1127,8 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
          "FullLTOPostLink shouldn't call buildModuleSimplificationPipeline!");
 
   ModulePassManager MPM;
+
+  MPM.addPass(RewriteStatepointsForGC());
 
   // Place pseudo probe instrumentation as the first pass of the pipeline to
   // minimize the impact of optimization changes.
@@ -2407,6 +2410,8 @@ PassBuilder::buildO0DefaultPipeline(OptimizationLevel Level,
          "buildO0DefaultPipeline should only be used with O0");
 
   ModulePassManager MPM;
+
+  MPM.addPass(RewriteStatepointsForGC());
 
   instructionCountersPass(MPM, /* IsPreOptimization */ true);
 
