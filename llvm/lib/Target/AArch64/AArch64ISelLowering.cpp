@@ -33045,6 +33045,9 @@ AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
     MI.addOperand(*MI.getMF(), MachineOperand::CreateReg(AArch64::LR,
                                                          /*isDef=*/true,
                                                          /*isImp=*/true));
+  MI.addOperand(*MI.getMF(),
+                MachineOperand::CreateReg(AArch64::FP, /*isDef=*/true,
+                                          /*isImp=*/true));
   return MBB2;
 }
 
