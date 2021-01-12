@@ -13475,5 +13475,6 @@ AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
   MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
   MachineFunction &MF = *MI.getMF();
   MI.addOperand(MF, MachineOperand::CreateReg(AArch64::LR, true, true));
+  MI.addOperand(MF, MachineOperand::CreateReg(AArch64::FP, true, true));
   return MBB2;
 }

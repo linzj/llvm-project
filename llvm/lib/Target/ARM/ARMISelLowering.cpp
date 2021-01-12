@@ -15206,9 +15206,13 @@ ARMTargetLowering::getScratchRegisters(CallingConv::ID CC) const {
 MachineBasicBlock *
 ARMTargetLowering::emitPatchPoint(MachineInstr &MI,
                                   MachineBasicBlock *MBB) const {
-  MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
+  const ARMBaseRegisterInfo &ARI =
+      *static_cast<const ARMBaseRegisterInfo *>(RegInfo);
   MachineFunction &MF = *MI.getMF();
+  Register FrameReg = ARI.getFrameRegister(MF);
+  MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
   MI.addOperand(MF, MachineOperand::CreateReg(ARM::LR, true, true));
+  MI.addOperand(MF, MachineOperand::CreateReg(FrameReg, true, true));
   return MBB2;
 }
 
