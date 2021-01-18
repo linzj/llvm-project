@@ -1868,6 +1868,11 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
     }
   }
 
+  if (LRSpilled && (AFI->isJSFunction() || AFI->isJSStub())) {
+    MFI.setFrameAddressIsTaken(true);
+    FramePtr = RegInfo->getFrameRegister(MF);
+  }
+
   // If any of the stack slot references may be out of range of an immediate
   // offset, make sure a register (or a spill slot) is available for the
   // register scavenger. Note that if we're indexing off the frame pointer, the
@@ -2115,16 +2120,6 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
     // Avoid spilling LR in Thumb1 if there's a tail call: it's expensive to
     // restore LR in that case.
     bool ExpensiveLRRestore = AFI->isThumb1OnlyFunction() && MFI.hasTailCall();
-    if (MF.getFunction().getCallingConv() == CallingConv::V8CC) {
-      if (!SavedRegs.test(FramePtr)) {
-        SavedRegs.set(FramePtr);
-        NumGPRSpills++;
-      }
-      if (!LRSpilled) {
-        SavedRegs.set(ARM::LR);
-        NumGPRSpills++;
-      }
-    }
 
     if (AFI->isJSFunction()) {
       SavedRegs.set(ARM::R0);
