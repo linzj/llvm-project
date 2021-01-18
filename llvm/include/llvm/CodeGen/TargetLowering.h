@@ -3457,7 +3457,6 @@ public:
     bool IsConvergent      : 1;
     bool IsPatchPoint      : 1;
     bool IsDartCCall       : 1;
-    bool IsJSSaveFP        : 1;
 
     // IsTailCall should be modified by implementations of
     // TargetLowering::LowerCall that perform tail call conversions.
@@ -3482,7 +3481,7 @@ public:
     CallLoweringInfo(SelectionDAG &DAG)
         : RetSExt(false), RetZExt(false), IsVarArg(false), IsInReg(false),
           DoesNotReturn(false), IsReturnValueUsed(true), IsConvergent(false),
-          IsPatchPoint(false), IsDartCCall(false), IsJSSaveFP(false), DAG(DAG) {
+          IsPatchPoint(false), IsDartCCall(false), DAG(DAG) {
     }
 
     CallLoweringInfo &setDebugLoc(const SDLoc &dl) {
@@ -3597,11 +3596,6 @@ public:
 
     CallLoweringInfo &setDartCCall(bool Value = true) {
       IsDartCCall = Value;
-      return *this;
-    }
-
-    CallLoweringInfo &setJSSaveFP(bool Value = true) {
-      IsJSSaveFP = Value;
       return *this;
     }
 
