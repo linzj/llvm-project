@@ -2149,14 +2149,21 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     }
   }
 
-  // Add a register mask operand representing the call-preserved registers.
-  bool IsCCallInsideJSSaveFP = false;
   bool IsDartSharedStubCall = CLI.IsDartSharedStubCall;
 
   if (CLI.IsDartCCall)
     hasJSCCall = false;
-  if (CallerCC == CallingConv::V8SBCC && hasJSCCall)
-    IsCCallInsideJSSaveFP = CLI.IsJSSaveFP;
+
+  bool IsCCallInsideJSSaveFP = [&]() {
+    if (CallerCC != CallingConv::V8SBCC)
+      return false;
+    if (!hasJSCCall)
+      return false;
+    const CallInst *Call = dyn_cast<CallInst>(CLI.CB);
+    if (!Call)
+      return false;
+    return Call->hasFnAttr("save-fp");
+  }();
 
   SDValue FPSaveArea0, FPSaveArea1, CCAL, CCR;
   // Save the FP.

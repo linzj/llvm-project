@@ -11099,7 +11099,6 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setIsPreallocated(
           Call->countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0)
       .setDartCCall(Call->hasFnAttr("dart-c-call"))
-      .setJSSaveFP(Call->hasFnAttr("save-fp"))
       .setDartSharedStubCall(Call->hasFnAttr("dart-shared-stub-call"));
 }
 

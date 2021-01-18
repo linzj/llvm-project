@@ -4884,7 +4884,6 @@ public:
     bool IsPreallocated : 1;
     bool NoMerge           : 1;
     bool IsDartCCall       : 1;
-    bool IsJSSaveFP        : 1;
     bool IsDartSharedStubCall : 1;
 
     // IsTailCall should be modified by implementations of
@@ -4915,8 +4914,7 @@ public:
         : RetSExt(false), RetZExt(false), IsVarArg(false), IsInReg(false),
           DoesNotReturn(false), IsReturnValueUsed(true), IsConvergent(false),
           IsPatchPoint(false), IsPreallocated(false), NoMerge(false),
-          IsDartCCall(false), IsJSSaveFP(false), IsDartSharedStubCall(false),
-          DAG(DAG) {}
+          IsDartCCall(false), IsDartSharedStubCall(false), DAG(DAG) {}
 
     CallLoweringInfo &setDebugLoc(const SDLoc &dl) {
       DL = dl;
@@ -5069,11 +5067,6 @@ public:
 
     CallLoweringInfo &setDartCCall(bool Value = true) {
       IsDartCCall = Value;
-      return *this;
-    }
-
-    CallLoweringInfo &setJSSaveFP(bool Value = true) {
-      IsJSSaveFP = Value;
       return *this;
     }
 
