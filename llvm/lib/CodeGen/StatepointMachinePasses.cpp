@@ -96,8 +96,8 @@ static MachineInstr *getSingleDef(const MachineRegisterInfo &MRI,
 }
 } // end of anonymous namespace
 
-INITIALIZE_PASS(StatepointSimplify, "statepoint-simplify",
-                "Statepoint Simplify", false, false)
+INITIALIZE_PASS(StatepointSimplify, DEBUG_TYPE, "Statepoint Simplify", false,
+                false)
 
 char StatepointSimplify::ID = 0;
 
@@ -315,6 +315,8 @@ void StatepointSimplify::replaceDstWithSrc(unsigned Dst, unsigned Src) {
   }
 }
 
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "statepoint-rewrite"
 char StatepointRewrite::ID = 0;
 
 INITIALIZE_PASS_BEGIN(StatepointRewrite, DEBUG_TYPE,
@@ -327,7 +329,10 @@ INITIALIZE_PASS_END(StatepointRewrite, DEBUG_TYPE, "Rewrite Statepoints PostRA",
                     false, false)
 
 StatepointRewrite::StatepointRewrite()
-    : MachineFunctionPass(ID), Indexes(nullptr), LSS(nullptr), VRM(nullptr) {}
+    : MachineFunctionPass(ID), Indexes(nullptr), LSS(nullptr), VRM(nullptr) {
+  PassRegistry &Registry = *PassRegistry::getPassRegistry();
+  initializeStatepointRewritePass(Registry);
+}
 
 void StatepointRewrite::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
@@ -429,17 +434,25 @@ bool StatepointRewrite::rewritePatchpoint(MachineFunction &MF,
       };
 
   auto AddPhysIfLiveOut = [&](Register Reg) {
-    if (!VRM->hasPhys(Reg))
+    if (!VRM->hasPhys(Reg)) {
       return false;
-    if (!LIS->hasInterval(Reg) || !LIS->getInterval(Reg).liveAt(Index))
+    }
+    if (!LIS->hasInterval(Reg) || !LIS->getInterval(Reg).liveAt(Index)) {
       return false;
+    }
     MIB.addReg(VRM->getPhys(Reg));
     return true;
   };
 
   for (const auto &RegInfo : RegInfoVector) {
-    if (Register::isPhysicalRegister(RegInfo.Reg))
+    LLVM_DEBUG(
+        dbgs() << "Trying to rewrite for ID: " << ID << "; Reg: "
+               << printReg(RegInfo.Reg, MF.getRegInfo().getTargetRegisterInfo())
+               << "\n");
+    if (Register::isPhysicalRegister(RegInfo.Reg)) {
+      MIB.addReg(RegInfo.Reg);
       continue;
+    }
     assert(VRM->getOriginal(RegInfo.Reg) == RegInfo.Reg);
     AddStackSlot(RegInfo);
     // Add live phys registers to MIB if targeted.
@@ -454,6 +467,7 @@ bool StatepointRewrite::rewritePatchpoint(MachineFunction &MF,
   MachineBasicBlock *MBB = PatchPoint->getParent();
   MachineBasicBlock::iterator Pos = PatchPoint;
   MBB->insert(Pos, NewMI);
+  LIS->ReplaceMachineInstrInMaps(*PatchPoint, *NewMI);
   MBB->erase(PatchPoint);
   return true;
 }
