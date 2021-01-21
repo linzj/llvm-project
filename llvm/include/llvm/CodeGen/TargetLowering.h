@@ -4885,6 +4885,7 @@ public:
     bool NoMerge           : 1;
     bool IsDartCCall       : 1;
     bool IsDartSharedStubCall : 1;
+    bool IsStatepointLiveOnly : 1;
 
     // IsTailCall should be modified by implementations of
     // TargetLowering::LowerCall that perform tail call conversions.
@@ -4914,7 +4915,8 @@ public:
         : RetSExt(false), RetZExt(false), IsVarArg(false), IsInReg(false),
           DoesNotReturn(false), IsReturnValueUsed(true), IsConvergent(false),
           IsPatchPoint(false), IsPreallocated(false), NoMerge(false),
-          IsDartCCall(false), IsDartSharedStubCall(false), DAG(DAG) {}
+          IsDartCCall(false), IsDartSharedStubCall(false),
+          IsStatepointLiveOnly(false), DAG(DAG) {}
 
     CallLoweringInfo &setDebugLoc(const SDLoc &dl) {
       DL = dl;
@@ -5067,6 +5069,11 @@ public:
 
     CallLoweringInfo &setDartCCall(bool Value = true) {
       IsDartCCall = Value;
+      return *this;
+    }
+
+    CallLoweringInfo &setStatepointLiveOnly(bool Value = true) {
+      IsStatepointLiveOnly = Value;
       return *this;
     }
 

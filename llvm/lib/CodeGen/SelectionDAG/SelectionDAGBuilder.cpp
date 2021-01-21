@@ -11099,7 +11099,8 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setIsPreallocated(
           Call->countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0)
       .setDartCCall(Call->hasFnAttr("dart-c-call"))
-      .setDartSharedStubCall(Call->hasFnAttr("dart-shared-stub-call"));
+      .setDartSharedStubCall(Call->hasFnAttr("dart-shared-stub-call"))
+      .setStatepointLiveOnly(Call->hasFnAttr("statepoint-live-only"));
 }
 
 /// Add a stack map intrinsic call's live variable operands to a stackmap

@@ -657,10 +657,10 @@ lowerStatepointMetaArgs(SmallVectorImpl<SDValue> &Ops,
                                  Builder);
   }
 
-  // Finally, go ahead and lower all the gc arguments.  For the V8 calling
-  // convention, all gc pointers are live-in values and are never forced into
-  // spill slots.
-  bool ForceLiveIn = SI.CLI.CallConv == CallingConv::V8CC;
+  // Finally, go ahead and lower all the gc arguments.  For functions marked
+  // statepoint-live-only, all gc pointers are live-in values and are never
+  // forced into spill slots.
+  bool ForceLiveIn = SI.CLI.IsStatepointLiveOnly;
   pushStackMapConstant(Ops, Builder, LoweredGCPtrs.size());
   for (SDValue SDV : LoweredGCPtrs)
     lowerIncomingStatepointValue(

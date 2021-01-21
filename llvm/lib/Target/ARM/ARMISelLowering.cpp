@@ -2041,8 +2041,7 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   bool GuardWithBTI = false;
   bool hasJSCCall     = false;
   CallingConv::ID CallerCC = MF.getFunction().getCallingConv();
-  bool CallerIsJS =
-      ((CallerCC == CallingConv::V8CC) || (CallerCC == CallingConv::V8SBCC));
+  bool CallerIsJS = AFI->isJSStub() || AFI->isJSFunction();
 
   // Analyze operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
@@ -2170,7 +2169,6 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   if (IsCCallInsideJSSaveFP) {
     MachineFrameInfo &MFI = MF.getFrameInfo();
     int FIFPSaveArea0, FIFPSaveArea1;
-    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
     FIFPSaveArea0 = AFI->getFIFPSaveArea0();
     if (FIFPSaveArea0 == -1) {
       FIFPSaveArea0 = MFI.CreateStackObject(8 * 16, Align(4), false);
