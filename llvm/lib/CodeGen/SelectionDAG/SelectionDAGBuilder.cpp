@@ -8702,7 +8702,7 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setCallee(Call->getCallingConv(), ReturnTy, Callee, std::move(Args))
       .setDiscardResult(Call->use_empty())
       .setIsPatchPoint(IsPatchPoint)
-      .setDartCCall(Call->hasFnAttr("dart-c-call"));
+      .setStatepointLiveOnly(Call->hasFnAttr("statepoint-live-only"));
 
   if (Call->hasFnAttr("custom-regmask")) {
     Attribute Attr =

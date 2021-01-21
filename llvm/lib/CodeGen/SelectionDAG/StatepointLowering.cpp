@@ -568,7 +568,7 @@ lowerStatepointMetaArgs(SmallVectorImpl<SDValue> &Ops,
   // arrays interwoven with each (lowered) base pointer immediately followed by
   // it's (lowered) derived pointer.  i.e
   // (base[0], ptr[0], base[1], ptr[1], ...)
-  bool LiveInOnly = SI.CLI.CallConv == CallingConv::V8CC;
+  bool LiveInOnly = SI.CLI.IsStatepointLiveOnly;
   for (unsigned i = 0; i < SI.Bases.size(); ++i) {
     const Value *Base = SI.Bases[i];
     lowerIncomingStatepointValue(Builder.getValue(Base), LiveInOnly, Ops,

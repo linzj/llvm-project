@@ -3454,9 +3454,9 @@ public:
     bool IsInReg           : 1;
     bool DoesNotReturn     : 1;
     bool IsReturnValueUsed : 1;
-    bool IsConvergent      : 1;
-    bool IsPatchPoint      : 1;
-    bool IsDartCCall       : 1;
+    bool IsConvergent : 1;
+    bool IsPatchPoint : 1;
+    bool IsStatepointLiveOnly : 1;
 
     // IsTailCall should be modified by implementations of
     // TargetLowering::LowerCall that perform tail call conversions.
@@ -3481,8 +3481,7 @@ public:
     CallLoweringInfo(SelectionDAG &DAG)
         : RetSExt(false), RetZExt(false), IsVarArg(false), IsInReg(false),
           DoesNotReturn(false), IsReturnValueUsed(true), IsConvergent(false),
-          IsPatchPoint(false), IsDartCCall(false), DAG(DAG) {
-    }
+          IsPatchPoint(false), IsStatepointLiveOnly(false), DAG(DAG) {}
 
     CallLoweringInfo &setDebugLoc(const SDLoc &dl) {
       DL = dl;
@@ -3594,8 +3593,8 @@ public:
       return *this;
     }
 
-    CallLoweringInfo &setDartCCall(bool Value = true) {
-      IsDartCCall = Value;
+    CallLoweringInfo &setStatepointLiveOnly(bool Value = true) {
+      IsStatepointLiveOnly = Value;
       return *this;
     }
 

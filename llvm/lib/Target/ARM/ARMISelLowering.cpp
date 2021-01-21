@@ -2109,10 +2109,10 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   bool isStructRet = (Outs.empty()) ? false : Outs[0].Flags.isSRet();
   bool isThisReturn = false;
   bool PreferIndirect = false;
-  bool hasJSCCall     = false;
+  bool hasJSCCall = false;
   CallingConv::ID CallerCC = MF.getFunction().getCallingConv();
-  bool CallerIsJS =
-      ((CallerCC == CallingConv::V8CC) || (CallerCC == CallingConv::V8SBCC));
+  ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+  bool CallerIsJS = AFI->isJSStub() || AFI->isJSFunction();
 
   // Disable tail calls if they're not supported.
   if (!Subtarget->supportsTailCall())
@@ -2170,9 +2170,6 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     }
   }
 
-  if (CLI.IsDartCCall)
-    hasJSCCall = false;
-
   bool IsCCallInsideJSSaveFP = [&]() {
     if (CallerCC != CallingConv::V8SBCC)
       return false;
@@ -2189,7 +2186,6 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   if (IsCCallInsideJSSaveFP) {
     MachineFrameInfo &MFI = MF.getFrameInfo();
     int FIFPSaveArea0, FIFPSaveArea1;
-    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
     FIFPSaveArea0 = AFI->getFIFPSaveArea0();
     if (FIFPSaveArea0 == -1) {
       FIFPSaveArea0 = MFI.CreateStackObject(8 * 16, 4, false);
@@ -2395,7 +2391,6 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   bool isARMFunc = !Subtarget->isThumb() || (isStub && !Subtarget->isMClass());
   bool isLocalARMFunc = false;
-  ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
   auto PtrVt = getPointerTy(DAG.getDataLayout());
 
   if (Subtarget->genLongCalls()) {
