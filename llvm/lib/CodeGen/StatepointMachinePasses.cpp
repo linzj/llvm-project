@@ -170,13 +170,16 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
           continue;
         if (!MaybeCopy->isFullCopy())
           continue;
-        Register Src = MaybeCopy->getOperand(1).getReg();
-        if (!Register::isVirtualRegister(Src))
+        Register SrcReg = MaybeCopy->getOperand(1).getReg();
+        if (!Register::isVirtualRegister(SrcReg))
           continue;
-        Register Dst = MaybeCopy->getOperand(0).getReg();
+        Register DstReg = MaybeCopy->getOperand(0).getReg();
+        // ARM use copy to cast from FP to SI. Check it.
+        if (MRI->getRegClass(DstReg) != MRI->getRegClass(SrcReg))
+          continue;
         LLVM_DEBUG(dbgs() << "foldRelocateDef: Replacing Copy " << *MaybeCopy
-                          << " with " << printReg(Src) << " for " << *MPhi);
-        replaceDstWithSrc(Dst, Src);
+                          << " with " << printReg(SrcReg) << " for " << *MPhi);
+        replaceDstWithSrc(DstReg, SrcReg);
         RemoveSet.emplace(MaybeCopy);
         Changed = true;
       }
