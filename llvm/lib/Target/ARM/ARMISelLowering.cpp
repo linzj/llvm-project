@@ -2154,7 +2154,7 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     hasJSCCall = false;
 
   bool IsCCallInsideJSSaveFP = [&]() {
-    if (CallerCC != CallingConv::V8SBCC)
+    if (!AFI->isJSStub())
       return false;
     if (!hasJSCCall)
       return false;
