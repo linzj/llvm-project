@@ -102,6 +102,7 @@ unsigned AArch64InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     NumBytes = StackMapOpers(&MI).getNumPatchBytes();
     assert(NumBytes % 4 == 0 && "Invalid number of NOP bytes requested!");
     break;
+  case TargetOpcode::TCPATCHPOINT:
   case TargetOpcode::PATCHPOINT:
     // The size of the patchpoint intrinsic is the number of bytes requested
     NumBytes = PatchPointOpers(&MI).getNumPatchBytes();

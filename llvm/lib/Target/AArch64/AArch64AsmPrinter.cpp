@@ -882,6 +882,7 @@ void AArch64AsmPrinter::LowerSTACKMAP(MCStreamer &OutStreamer, StackMaps &SM,
     if (MII == MBB.end() || MII->isCall() ||
         MII->getOpcode() == AArch64::DBG_VALUE ||
         MII->getOpcode() == TargetOpcode::PATCHPOINT ||
+        MII->getOpcode() == TargetOpcode::TCPATCHPOINT ||
         MII->getOpcode() == TargetOpcode::STACKMAP)
       break;
     ++MII;
