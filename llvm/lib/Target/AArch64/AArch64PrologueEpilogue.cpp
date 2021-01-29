@@ -687,6 +687,14 @@ void AArch64PrologueEmitter::emitPrologue() {
   if (MF.getFunction().getCallingConv() == CallingConv::GHC)
     return;
 
+  if (AFI->isJSStub()) {
+    if (MF.getRegInfo().isLiveIn(AArch64::X28)) {
+      MachineBasicBlock &EntryMBB = MF.front();
+      TII->copyPhysReg(EntryMBB, EntryMBB.begin(), DL, AArch64::X28, AArch64::FP,
+                       false);
+    }
+  }
+
   // Set tagged base pointer to the requested stack slot. Ideally it should
   // match SP value after prologue.
   if (std::optional<int> TBPI = AFI->getTaggedBasePointerIndex())
@@ -893,6 +901,31 @@ void AArch64PrologueEmitter::emitPrologue() {
     }
     emitCalleeSavedGPRLocations(AfterSVESavesI);
     emitCalleeSavedSVELocations(AfterSVESavesI);
+  }
+
+  // JS related.
+  if (AFI->isJSStub()) {
+    int Marker;
+    MF.getFunction()
+        .getFnAttribute("js-stub-call")
+        .getValueAsString()
+        .getAsInteger(10, Marker);
+    BuildMI(MBB, AfterSVESavesI, DL, TII->get(AArch64::MOVZXi), AArch64::X16)
+        .addImm(Marker)
+        .addImm(AArch64_AM::getShifterImm(AArch64_AM::LSL, 0));
+    TII->storeRegToStackSlot(MBB, AfterSVESavesI, AArch64::X16, true,
+                             AFI->getFIJSStubMarker(), &AArch64::GPR64RegClass,
+                             Register());
+  } else if (AFI->isJSFunction()) {
+    TII->storeRegToStackSlot(MBB, AfterSVESavesI, AArch64::X0, true,
+                             AFI->getFIArgsCountMarker(),
+                             &AArch64::GPR64RegClass, Register());
+    TII->storeRegToStackSlot(MBB, AfterSVESavesI, AArch64::X1, true,
+                             AFI->getFIJSFunctionMarker(),
+                             &AArch64::GPR64RegClass, Register());
+    TII->storeRegToStackSlot(MBB, AfterSVESavesI, AArch64::X27, true,
+                             AFI->getFIContextMarker(), &AArch64::GPR64RegClass,
+                             Register());
   }
 }
 

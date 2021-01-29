@@ -33037,6 +33037,16 @@ bool AArch64TargetLowering::needsFixedCatchObjects() const { return true; }
 MachineBasicBlock *
 AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
                                       MachineBasicBlock *MBB) const {
+  if (MI.getOpcode() == TargetOpcode::TCPATCHPOINT) {
+    for (unsigned OperIdx = MI.getNumOperands() - 1; OperIdx != 0; --OperIdx) {
+      MachineOperand &MO = MI.getOperand(OperIdx);
+      if (MO.isImplicit() && MO.isEarlyClobber() &&
+          MO.getReg() == AArch64::LR) {
+        MI.removeOperand(OperIdx);
+        return MBB;
+      }
+    }
+  }
   MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
   // These pseudo instructions may be expanded to a call, which clobbers LR.
   // STATEPOINT already carries an implicit LR def added in
@@ -33045,9 +33055,6 @@ AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
     MI.addOperand(*MI.getMF(), MachineOperand::CreateReg(AArch64::LR,
                                                          /*isDef=*/true,
                                                          /*isImp=*/true));
-  MI.addOperand(*MI.getMF(),
-                MachineOperand::CreateReg(AArch64::FP, /*isDef=*/true,
-                                          /*isImp=*/true));
   return MBB2;
 }
 

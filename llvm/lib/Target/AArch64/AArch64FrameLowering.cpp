@@ -598,7 +598,6 @@ bool AArch64FrameLowering::hasFPImpl(const MachineFunction &MF) const {
   if (MF.getTarget().Options.DisableFramePointerElim(MF))
     return true;
   if (MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken() ||
-      MFI.hasStackMap() || MFI.hasPatchPoint() ||
       RegInfo->hasStackRealignment(MF))
     return true;
 
@@ -2800,6 +2799,17 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   AFI->setCalleeSavedStackSize(AlignedCSStackSize);
   AFI->setCalleeSaveStackHasFreeSpace(AlignedCSStackSize != CSStackSize);
   AFI->setSVECalleeSavedStackSize(ZPRCSStackSize, alignTo(PPRCSStackSize, 16));
+
+  if (hasFP(MF)) {
+    if (AFI->isJSStub()) {
+      SavedRegs.set(AArch64::X16);
+      SavedRegs.set(AArch64::X28);
+    } else if (AFI->isJSFunction()) {
+      SavedRegs.set(AArch64::X27);
+      SavedRegs.set(AArch64::X1);
+      SavedRegs.set(AArch64::X0);
+    }
+  }
 }
 
 bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
@@ -2822,6 +2832,15 @@ bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
   // stack slots for them.
   MachineFrameInfo &MFI = MF.getFrameInfo();
   auto *AFI = MF.getInfo<AArch64FunctionInfo>();
+
+  // V8/Dart: reserve fixed spill slots for the JS markers.
+  if (AFI->isJSStub()) {
+    AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(8, -24));
+  } else if (AFI->isJSFunction()) {
+    AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(8, -24));
+    AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(8, -32));
+    AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(8, -40));
+  }
 
   // Insert VG into the list of CSRs, immediately before LR if saved.
   if (requiresSaveVG(MF)) {

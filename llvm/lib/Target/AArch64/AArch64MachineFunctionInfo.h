@@ -240,6 +240,16 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   // support).
   Register EarlyAllocSMESaveBuffer = AArch64::NoRegister;
 
+  /// V8/Dart
+  mutable int LastSPAdjust = 0;
+  int FIJSStubMarker = -1;
+  int FIJSFunctionMarker = -1;
+  int FIContextMarker = -1;
+  int FIArgsCountMarker = -1;
+  bool IsJSFunction = false;
+  bool IsJSStub = false;
+  bool IsWASM = false;
+
 public:
   AArch64FunctionInfo(const Function &F, const AArch64Subtarget *STI);
 
@@ -606,6 +616,22 @@ public:
   bool hasStackProbing() const { return StackProbeSize != 0; }
 
   int64_t getStackProbeSize() const { return StackProbeSize; }
+
+  // V8/Dart
+  bool isJSFunction() const { return IsJSFunction; }
+  bool isJSStub() const { return IsJSStub; }
+  bool isWASM() const { return IsWASM; }
+  void setJSFunction(bool s) { IsJSFunction = s; }
+  void setJSStub(bool s) { IsJSStub = s; }
+  void setWASM(bool s) { IsWASM = s; }
+  void setFIJSStubMarker(int FI) { FIJSStubMarker = FI; }
+  void setFIJSFunctionMarker(int FI) { FIJSFunctionMarker = FI; }
+  void setFIContextMarker(int FI) { FIContextMarker = FI; }
+  void setFIArgsCountMarker(int FI) { FIArgsCountMarker = FI; }
+  int getFIJSStubMarker() const { return FIJSStubMarker; }
+  int getFIJSFunctionMarker() const { return FIJSFunctionMarker; }
+  int getFIContextMarker() const { return FIContextMarker; }
+  int getFIArgsCountMarker() const { return FIArgsCountMarker; }
 
 private:
   // Hold the lists of LOHs.

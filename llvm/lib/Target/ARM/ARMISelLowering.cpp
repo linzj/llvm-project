@@ -19688,7 +19688,6 @@ ARMTargetLowering::emitPatchPoint(MachineInstr &MI,
   Register FrameReg = ARI.getFrameRegister(MF);
   MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
   MI.addOperand(MF, MachineOperand::CreateReg(ARM::LR, true, true));
-  MI.addOperand(MF, MachineOperand::CreateReg(FrameReg, true, true));
   return MBB2;
 }
 
