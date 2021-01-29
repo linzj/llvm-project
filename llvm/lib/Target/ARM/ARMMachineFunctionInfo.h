@@ -132,16 +132,17 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   /// The amount the literal pool has been increasedby due to promoted globals.
   int PromotedGlobalsIncrease = 0;
 
+  /// V8/Dart
   mutable int LastSPAdjust = 0;
   int FIFPSaveArea0 = -1;
   int FIFPSaveArea1 = -1;
   bool IsJSFunction = false;
+  bool IsJSStub = false;
+  bool IsWASM = false;
+
   /// True if r0 will be preserved by a call to this function (e.g. C++
   /// con/destructors).
   bool PreservesR0 = false;
-
-  bool IsJSStub = false;
-  bool IsWASM = false;
 
 public:
   ARMFunctionInfo() = default;
@@ -260,18 +261,18 @@ public:
   void setPromotedConstpoolIncrease(int Sz) {
     PromotedGlobalsIncrease = Sz;
   }
+  /// V8/Dart
   bool isJSFunction() const { return IsJSFunction; }
   bool isJSStub() const { return IsJSStub; }
   bool isWASM() const { return IsWASM; }
-
   void setJSFunction(bool s) { IsJSFunction = s; }
+  void setJSStub(bool s) { IsJSStub = s; }
+  void setWASM(bool s) { IsWASM = s; }
 
   DenseMap<unsigned, unsigned> EHPrologueRemappedRegs;
 
   void setPreservesR0() { PreservesR0 = true; }
   bool getPreservesR0() const { return PreservesR0; }
-  void setJSStub(bool s) { IsJSStub = s; }
-  void setWASM(bool s) { IsWASM = s; }
 
   void pushLastSPAdjust(int n) const { LastSPAdjust = n; }
   int popLastSPAdjust() const {

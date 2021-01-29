@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "AArch64MachineFunctionInfo.h"
 #include "AArch64TargetMachine.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "llvm/ADT/APSInt.h"
@@ -50,6 +51,14 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
+    const Function &F = MF.getFunction();
+    AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+    if (F.hasFnAttribute("js-function-call"))
+      AFI->setJSFunction(true);
+    else if (F.hasFnAttribute("js-stub-call"))
+      AFI->setJSStub(true);
+    if (F.hasFnAttribute("js-wasm-call"))
+      AFI->setWASM(true);
     Subtarget = &MF.getSubtarget<AArch64Subtarget>();
     return SelectionDAGISel::runOnMachineFunction(MF);
   }

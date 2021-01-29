@@ -274,7 +274,6 @@ bool AArch64FrameLowering::hasFP(const MachineFunction &MF) const {
   if (MF.getTarget().Options.DisableFramePointerElim(MF))
     return true;
   if (MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken() ||
-      MFI.hasStackMap() || MFI.hasPatchPoint() ||
       RegInfo->needsStackRealignment(MF))
     return true;
   // With large callframes around we may need to use FP to access the scavenging
@@ -932,6 +931,12 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   if (MF.getFunction().getCallingConv() == CallingConv::GHC)
     return;
 
+  if (AFI->isJSStub()) {
+    if (MF.getRegInfo().isLiveIn(AArch64::X28)) {
+      MachineBasicBlock &MBB = MF.front();
+      TII->copyPhysReg(MBB, MBB.begin(), DL, AArch64::X28, AArch64::FP, false);
+    }
+  }
   // Set tagged base pointer to the bottom of the stack frame.
   // Ideally it should match SP value after prologue.
   AFI->setTaggedBasePointerOffset(MFI.getStackSize());
@@ -1340,6 +1345,35 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
     // Now emit the moves for whatever callee saved regs we have (including FP,
     // LR if those are saved).
     emitCalleeSavedFrameMoves(MBB, MBBI);
+  }
+
+  // JS related.
+  if (AFI->isJSStub()) {
+    int Marker;
+    MF.getFunction()
+        .getFnAttribute("js-stub-call")
+        .getValueAsString()
+        .getAsInteger(10, Marker);
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVZXi), AArch64::X16)
+        .addImm(Marker)
+        .addImm(AArch64_AM::getShifterImm(AArch64_AM::LSL, 0));
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+    TII->storeRegToStackSlot(MBB, MBBI, AArch64::X16, true,
+                             AFI->getFIJSStubMarker(), &AArch64::GPR64RegClass,
+                             TRI);
+  } else if (AFI->isJSFunction()) {
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+    TII->storeRegToStackSlot(MBB, MBBI, AArch64::X0, true,
+                             AFI->getFIArgsCountMarker(),
+                             &AArch64::GPR64RegClass, TRI);
+    TII->storeRegToStackSlot(MBB, MBBI, AArch64::X1, true,
+                             AFI->getFIJSFunctionMarker(),
+                             &AArch64::GPR64RegClass, TRI);
+    TII->storeRegToStackSlot(MBB, MBBI, AArch64::X27, true,
+                             AFI->getFIContextMarker(), &AArch64::GPR64RegClass,
+                             TRI);
   }
 }
 
@@ -2506,6 +2540,17 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   AFI->setCalleeSavedStackSize(AlignedCSStackSize);
   AFI->setCalleeSaveStackHasFreeSpace(AlignedCSStackSize != CSStackSize);
   AFI->setSVECalleeSavedStackSize(alignTo(SVECSStackSize, 16));
+
+  if (hasFP(MF)) {
+    if (AFI->isJSStub()) {
+      SavedRegs.set(AArch64::X16);
+      SavedRegs.set(AArch64::X28);
+    } else if (AFI->isJSFunction()) {
+      SavedRegs.set(AArch64::X27);
+      SavedRegs.set(AArch64::X1);
+      SavedRegs.set(AArch64::X0);
+    }
+  }
 }
 
 bool AArch64FrameLowering::enableStackSlotScavenging(
@@ -2703,4 +2748,26 @@ unsigned AArch64FrameLowering::getWinEHFuncletFrameSize(
   // This is the amount of stack a funclet needs to allocate.
   return alignTo(CSSize + MF.getFrameInfo().getMaxCallFrameSize(),
                  getStackAlignment());
+}
+
+bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
+    MachineFunction &MF, const TargetRegisterInfo *TRI,
+    std::vector<CalleeSavedInfo> &CSI) const {
+  AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  // default handle.
+  if (!AFI->isJSStub() && !AFI->isJSFunction())
+    return false;
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  // No need to do anything.
+  if (CSI.empty())
+    return false;
+  int FixedOffset;
+  if (AFI->isJSStub()) {
+    AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(8, -24));
+  } else {
+    AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(8, -24));
+    AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(8, -32));
+    AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(8, -40));
+  }
+  return false;
 }

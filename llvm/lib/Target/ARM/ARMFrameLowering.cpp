@@ -2815,10 +2815,7 @@ void ARMFrameLowering::emitJSPrologue(MachineFunction &MF,
   if (AFI->isJSStub()) {
     if (MF.getRegInfo().isLiveIn(ARM::R9)) {
       MachineBasicBlock &MBB = MF.front();
-      BuildMI(MBB, MBB.instr_begin(), dl, TII.get(ARM::MOVr), ARM::R9)
-          .addReg(ARM::R11)
-          .add(predOps(ARMCC::AL))
-          .add(condCodeOp());
+      TII.copyPhysReg(MBB, MBB.instr_begin(), dl, ARM::R9, ARM::R11, false);
     }
     // Push LR as marker.
     GPRCS1Size = 4;

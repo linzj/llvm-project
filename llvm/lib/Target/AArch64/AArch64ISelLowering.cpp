@@ -13472,9 +13472,18 @@ bool AArch64TargetLowering::needsFixedCatchObjects() const { return false; }
 MachineBasicBlock *
 AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
                                       MachineBasicBlock *MBB) const {
+  if (MI.getOpcode() == TargetOpcode::TCPATCHPOINT) {
+    for (unsigned OperIdx = MI.getNumOperands() - 1; OperIdx != 0; --OperIdx) {
+      MachineOperand &MO = MI.getOperand(OperIdx);
+      if (MO.isImplicit() && MO.isEarlyClobber() &&
+          MO.getReg() == AArch64::LR) {
+        MI.RemoveOperand(OperIdx);
+        return MBB;
+      }
+    }
+  }
   MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
   MachineFunction &MF = *MI.getMF();
   MI.addOperand(MF, MachineOperand::CreateReg(AArch64::LR, true, true));
-  MI.addOperand(MF, MachineOperand::CreateReg(AArch64::FP, true, true));
   return MBB2;
 }

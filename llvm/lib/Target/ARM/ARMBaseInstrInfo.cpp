@@ -1618,9 +1618,9 @@ void ARMBaseInstrInfo::expandRESTORESP(MachineBasicBlock::iterator MI) const {
 }
 
 int ARMBaseInstrInfo::getSPAdjust(const MachineInstr &MI) const {
-
   const MachineFunction *MF = MI.getParent()->getParent();
   const ARMFunctionInfo *AFI = MF->getInfo<ARMFunctionInfo>();
+
   if (!AFI->isJSFunction() && !AFI->isJSStub())
     return ARMGenInstrInfo::getSPAdjust(MI);
   if (MI.isCall()) {
