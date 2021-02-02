@@ -671,6 +671,9 @@ bool AArch64FrameLowering::hasReservedCallFrame(
   // code, which issues a probe if `hasVarSizedObjects` return true, or by the
   // most recent variable-sized object allocation. Changing the condition here
   // may need to be followed up by changes to the probe issuing logic.
+  const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  if (AFI->isJSStub() || AFI->isJSFunction())
+    return false;
   return !MF.getFrameInfo().hasVarSizedObjects();
 }
 
@@ -1464,6 +1467,10 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
         if (FPOffsetFits && PreferFP) // If FP is the best fit, use it.
           UseFP = true;
       }
+    }
+    // Enforce JS msut use FP. Safepoint requires FP.
+    if (AFI->isJSStub() || AFI->isJSFunction()) {
+      UseFP = true;
     }
   }
 

@@ -1471,7 +1471,10 @@ bool PEIImpl::replaceFrameIndexDebugInstr(MachineFunction &MF, MachineInstr &MI,
         MF, MI.getOperand(OpIdx).getIndex(), Reg, /*IgnoreSPUpdates*/ false);
     assert(!refOffset.getScalable() &&
            "Frame offsets with a scalable component are not supported");
-    Offset.setImm(Offset.getImm() + refOffset.getFixed() + SPAdj);
+    int Adj = 0;
+    if (!TFI->hasFP(MF) || Reg != TRI.getFrameRegister(MF))
+      Adj = SPAdj;
+    Offset.setImm(Offset.getImm() + refOffset.getFixed() + Adj);
     MI.getOperand(OpIdx).ChangeToRegister(Reg, false /*isDef*/);
     return true;
   }

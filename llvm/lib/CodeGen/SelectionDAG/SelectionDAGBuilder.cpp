@@ -11272,12 +11272,14 @@ void SelectionDAGBuilder::visitPatchpoint(const CallBase &CB,
   TargetLowering::CallLoweringInfo CLI(DAG);
   populateCallLoweringInfo(CLI, &CB, NumMetaOpers, NumCallArgs, Callee,
                            ReturnTy, CB.getAttributes().getRetAttrs(), true);
-  CLI.IsTailCall = isPatchpointInTailCallPosition(CB);
+  bool IsTailCall = isPatchpointInTailCallPosition(CB);
+  CLI.IsTailCall = IsTailCall;
   assert((!CLI.IsTailCall || !HasDef) &&
          "TailCall should not has a return type");
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
   SDNode *Call;
   assert(CLI.IsTailCall || !HasTailCall);
+  assert(CLI.IsTailCall == IsTailCall);
   if (!CLI.IsTailCall) {
     SDNode *CallEnd = Result.second.getNode();
     if (CallEnd->getOpcode() == ISD::EH_LABEL)
@@ -11309,7 +11311,7 @@ void SelectionDAGBuilder::visitPatchpoint(const CallBase &CB,
   // stack instead.
   // Call Node: Chain, Target, {Args}, [RegMask], [Glue]
   unsigned NumCallRegArgs =
-      Call->getNumOperands() + (CLI.IsTailCall ? 1 : 0) - (HasGlue ? 4 : 3);
+      Call->getNumOperands() + (IsTailCall ? 1 : 0) - (HasGlue ? 4 : 3);
   NumCallRegArgs = IsAnyRegCC ? NumArgs : NumCallRegArgs;
 
   if (!CLI.IsTailCall) {

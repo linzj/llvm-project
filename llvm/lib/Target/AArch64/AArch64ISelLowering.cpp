@@ -10261,6 +10261,9 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   else if (CallAttrs.caller().hasZAState() || CallAttrs.caller().hasZT0State())
     ZAMarkerNode = AArch64ISD::INOUT_ZA_USE;
 
+  const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  bool CallerIsJS = AFI->isJSStub() || AFI->isJSFunction();
+
   if (IsTailCall) {
     // Check if it's really possible to do a tail call.
     IsTailCall = isEligibleForTailCallOptimization(CLI);
@@ -10273,6 +10276,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
     if (IsTailCall)
       ++NumTailCalls;
+    // JS semantic violated.
+    assert(IsTailCall || !CallerIsJS);
   }
 
   if (!IsTailCall && CLI.CB && CLI.CB->isMustTailCall())
@@ -10874,6 +10879,10 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   uint64_t CalleePopBytes =
       DoesCalleeRestoreStack(CallConv, TailCallOpt) ? alignTo(NumBytes, 16) : 0;
+
+  // JS Context handling.
+  if (CallerIsJS && CallConv == CallingConv::V8CC)
+    CalleePopBytes = alignTo(NumBytes, 16);
 
   Chain = DAG.getCALLSEQ_END(Chain, NumBytes, CalleePopBytes, InGlue, DL);
   InGlue = Chain.getValue(1);
