@@ -62,7 +62,7 @@ public:
 
   /// The entry type of a patch point reg.
   /// Record the spill info.
-  struct PatchpointRegInfo {
+  struct StatePointRegInfo {
     Register Reg;
     unsigned SpillSize;
     unsigned SpillOffset;
@@ -154,9 +154,9 @@ private:
   std::vector<std::pair<unsigned, unsigned>> LiveIns;
 
   /// Record the original Reg and its spill info for a patch point.
-  using PatchpointIDMapType =
-      DenseMap<uint64_t, SmallVector<PatchpointRegInfo, 8>>;
-  PatchpointIDMapType PatchpointIDMap;
+  using StatePointIDMapType =
+      DenseMap<uint64_t, SmallVector<StatePointRegInfo, 8>>;
+  StatePointIDMapType StatePointIDMap;
 
 public:
   explicit MachineRegisterInfo(MachineFunction *MF);
@@ -1179,7 +1179,7 @@ public:
     MachineInstr *operator->() const { return &operator*(); }
   };
 
-  PatchpointIDMapType &getPatchpointIDMap() { return PatchpointIDMap; }
+  StatePointIDMapType &getStatePointIDMap() { return StatePointIDMap; }
 };
 
 /// Iterate over the pressure sets affected by the given physical or virtual

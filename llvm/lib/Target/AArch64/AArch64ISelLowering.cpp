@@ -3940,6 +3940,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   AArch64FunctionInfo *FuncInfo = MF.getInfo<AArch64FunctionInfo>();
   bool TailCallOpt = MF.getTarget().Options.GuaranteedTailCallOpt;
   bool IsSibCall = false;
+  const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  bool CallerIsJS = AFI->isJSStub() || AFI->isJSFunction();
 
   if (IsTailCall) {
     // Check if it's really possible to do a tail call.
@@ -3956,6 +3958,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
     if (IsTailCall)
       ++NumTailCalls;
+    // JS semantic violated.
+    assert(IsTailCall || !CallerIsJS);
   }
 
   // Analyze operands of the call, assigning locations to each operand.
@@ -4339,6 +4343,10 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   uint64_t CalleePopBytes =
       DoesCalleeRestoreStack(CallConv, TailCallOpt) ? alignTo(NumBytes, 16) : 0;
+
+  // JS Context handling.
+  if (CallerIsJS && CallConv == CallingConv::V8CC)
+    CalleePopBytes = alignTo(NumBytes, 16);
 
   Chain = DAG.getCALLSEQ_END(Chain, DAG.getIntPtrConstant(NumBytes, DL, true),
                              DAG.getIntPtrConstant(CalleePopBytes, DL, true),

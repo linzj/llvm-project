@@ -237,6 +237,9 @@ getReservedRegs(const MachineFunction &MF) const {
   } else if (F.getCallingConv() == CallingConv::V8CC) {
     markSuperRegs(Reserved, ARM::R10);
     markSuperRegs(Reserved, ARM::R11);
+    // Some value maybe stored in the LR, and sibling call will clobbers LR.
+    if (MF.getFrameInfo().hasTailCall())
+      markSuperRegs(Reserved, ARM::LR);
   }
   if (F.hasFnAttribute("dart-call")) {
     // reserve R5 for object pool
@@ -796,6 +799,15 @@ ARMBaseRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   int Offset = TFI->ResolveFrameIndexReference(MF, FrameIndex, FrameReg, SPAdj);
 
+  // Special handling of dbg_value, stackmap and patchpoint instructions.
+  if (MI.isDebugValue() || MI.getOpcode() == TargetOpcode::STACKMAP ||
+      MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+      MI.getOpcode() == TargetOpcode::TCPATCHPOINT) {
+    Offset += MI.getOperand(FIOperandNum + 1).getImm();
+    MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, false /*isDef*/);
+    MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
+    return;
+  }
   // PEI::scavengeFrameVirtualRegs() cannot accurately track SPAdj because the
   // call frame setup/destroy instructions have already been eliminated.  That
   // means the stack pointer cannot be used to access the emergency spill slot

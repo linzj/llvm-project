@@ -1255,7 +1255,10 @@ void PEI::replaceFrameIndices(MachineBasicBlock *BB, MachineFunction &MF,
         MachineOperand &Offset = MI.getOperand(i + 1);
         int refOffset = TFI->getFrameIndexReferencePreferSP(
             MF, MI.getOperand(i).getIndex(), Reg, /*IgnoreSPUpdates*/ false);
-        Offset.setImm(Offset.getImm() + refOffset + SPAdj);
+        int Adj = 0;
+        if (!TFI->hasFP(MF) || Reg != TRI.getFrameRegister(MF))
+          Adj = SPAdj;
+        Offset.setImm(Offset.getImm() + refOffset + Adj);
         MI.getOperand(i).ChangeToRegister(Reg, false /*isDef*/);
         continue;
       }

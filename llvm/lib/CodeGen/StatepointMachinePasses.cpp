@@ -57,9 +57,9 @@ public:
 private:
   bool foldRelocateDef(MachineFunction &F);
   /// Remove the redundant move immediate from statepoints.
-  bool removeVarFromPatchpoints(MachineFunction &MF);
+  bool removeVarFromStatepoints(MachineFunction &MF);
 
-  bool removeVarFromPatchpoint(MachineFunction &MF, MachineInstr *MI);
+  bool removeVarFromStatepoint(MachineFunction &MF, MachineInstr *MI);
 
   void replaceDstWithSrc(unsigned Dst, unsigned Src);
 
@@ -79,8 +79,8 @@ public:
   static char ID;
 
 private:
-  bool rewritePatchpoints(MachineFunction &);
-  bool rewritePatchpoint(MachineFunction &, MachineInstr *MI);
+  bool rewriteStatepoints(MachineFunction &);
+  bool rewriteStatepoint(MachineFunction &, MachineInstr *MI);
   SlotIndexes *Indexes;
   LiveIntervals *LIS;
   LiveStacks *LSS;
@@ -109,7 +109,7 @@ StatepointSimplify::StatepointSimplify()
 
 bool StatepointSimplify::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = foldRelocateDef(MF);
-  Changed |= removeVarFromPatchpoints(MF);
+  Changed |= removeVarFromStatepoints(MF);
   return Changed;
 }
 
@@ -220,16 +220,13 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   return !RemoveSet.empty();
 }
 
-bool StatepointSimplify::removeVarFromPatchpoints(MachineFunction &MF) {
+bool StatepointSimplify::removeVarFromStatepoints(MachineFunction &MF) {
   bool Changed = false;
   SmallVector<MachineInstr *, 8> WorkList;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
       switch (MI.getOpcode()) {
-      case TargetOpcode::STACKMAP:
-      case TargetOpcode::PATCHPOINT:
-      case TargetOpcode::TCPATCHPOINT:
       case TargetOpcode::STATEPOINT:
         WorkList.emplace_back(&MI);
         break;
@@ -237,52 +234,41 @@ bool StatepointSimplify::removeVarFromPatchpoints(MachineFunction &MF) {
     }
   }
   for (MachineInstr *MI : WorkList)
-    Changed |= removeVarFromPatchpoint(MF, MI);
+    Changed |= removeVarFromStatepoint(MF, MI);
   return Changed;
 }
 
-bool StatepointSimplify::removeVarFromPatchpoint(MachineFunction &MF,
-                                                 MachineInstr *PatchPoint) {
+bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
+                                                 MachineInstr *StatePoint) {
   unsigned StartIdx = 0;
   uint64_t ID = 0;
-  switch (PatchPoint->getOpcode()) {
-  case TargetOpcode::STACKMAP: {
-    StackMapOpers Op(PatchPoint);
-    StartIdx = Op.getVarIdx();
-    ID = Op.getID();
-    break;
-  }
-  case TargetOpcode::TCPATCHPOINT:
-  case TargetOpcode::PATCHPOINT: {
-    PatchPointOpers Op(PatchPoint);
-    StartIdx = Op.getVarIdx();
-    ID = Op.getID();
-    break;
-  }
+  switch (StatePoint->getOpcode()) {
   case TargetOpcode::STATEPOINT: {
-    StatepointOpers Op(PatchPoint);
+    StatepointOpers Op(StatePoint);
     StartIdx = Op.getVarIdx();
     ID = Op.getID();
+    int64_t NumDeoptArgs = StatePoint->getOperand(StartIdx + 5).getImm();
+    StartIdx += 6 + NumDeoptArgs;
     break;
   }
   default:
     llvm_unreachable("unexpected stackmap opcode");
   }
 
-  if (StartIdx == PatchPoint->getNumOperands())
+  if (StartIdx == StatePoint->getNumOperands())
     return false;
 
-  MachineInstr *NewMI = MF.CreateMachineInstr(TII->get(PatchPoint->getOpcode()),
-                                              PatchPoint->getDebugLoc(), true);
+  MachineInstr *NewMI = MF.CreateMachineInstr(TII->get(StatePoint->getOpcode()),
+                                              StatePoint->getDebugLoc(), true);
   MachineInstrBuilder MIB(MF, NewMI);
 
   // No need to fold return, the meta data, and function arguments
   for (unsigned i = 0; i < StartIdx; ++i)
-    MIB.add(PatchPoint->getOperand(i));
+    MIB.add(StatePoint->getOperand(i));
 
-  auto &IDMap = MRI->getPatchpointIDMap();
-  for (unsigned i = StartIdx; i < PatchPoint->getNumOperands(); ++i) {
-    MachineOperand &MO = PatchPoint->getOperand(i);
+  auto &IDMap = MRI->getStatePointIDMap();
+  for (unsigned i = StartIdx; i < StatePoint->getNumOperands(); ++i) {
+    MachineOperand &MO = StatePoint->getOperand(i);
     if (!MO.isReg() || Register::isPhysicalRegister(MO.getReg())) {
       MIB.add(MO);
       continue;
@@ -295,14 +281,14 @@ bool StatepointSimplify::removeVarFromPatchpoint(MachineFunction &MF,
     bool Valid =
         TII->getStackSlotRange(RC, MO.getSubReg(), SpillSize, SpillOffset, MF);
     if (!Valid)
-      report_fatal_error("cannot spill patchpoint subregister operand");
+      report_fatal_error("cannot spill statepoint subregister operand");
     IDMap[ID].emplace_back(
-        MachineRegisterInfo::PatchpointRegInfo{Reg, SpillSize, SpillOffset});
+        MachineRegisterInfo::StatePointRegInfo{Reg, SpillSize, SpillOffset});
   }
-  MachineBasicBlock *MBB = PatchPoint->getParent();
-  MachineBasicBlock::iterator Pos = PatchPoint;
+  MachineBasicBlock *MBB = StatePoint->getParent();
+  MachineBasicBlock::iterator Pos = StatePoint;
   MBB->insert(Pos, NewMI);
-  MBB->erase(PatchPoint);
+  MBB->erase(StatePoint);
   return !IDMap.empty();
 }
 
@@ -351,19 +337,16 @@ bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
   LIS = &getAnalysis<LiveIntervals>();
   LSS = &getAnalysis<LiveStacks>();
   VRM = &getAnalysis<VirtRegMap>();
-  return rewritePatchpoints(MF);
+  return rewriteStatepoints(MF);
 }
 
-bool StatepointRewrite::rewritePatchpoints(MachineFunction &MF) {
+bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   bool Changed = false;
   SmallVector<MachineInstr *, 8> WorkList;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
       switch (MI.getOpcode()) {
-      case TargetOpcode::STACKMAP:
-      case TargetOpcode::PATCHPOINT:
-      case TargetOpcode::TCPATCHPOINT:
       case TargetOpcode::STATEPOINT:
         WorkList.emplace_back(&MI);
         break;
@@ -371,30 +354,17 @@ bool StatepointRewrite::rewritePatchpoints(MachineFunction &MF) {
     }
   }
   for (MachineInstr *MI : WorkList)
-    Changed |= rewritePatchpoint(MF, MI);
+    Changed |= rewriteStatepoint(MF, MI);
   return Changed;
 }
 
-bool StatepointRewrite::rewritePatchpoint(MachineFunction &MF,
-                                          MachineInstr *PatchPoint) {
+bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
+                                          MachineInstr *StatePoint) {
   unsigned StartIdx = 0;
   uint64_t ID = 0;
-  switch (PatchPoint->getOpcode()) {
-  case TargetOpcode::STACKMAP: {
-    StackMapOpers Op(PatchPoint);
-    StartIdx = Op.getVarIdx();
-    ID = Op.getID();
-    break;
-  }
-  case TargetOpcode::TCPATCHPOINT:
-  case TargetOpcode::PATCHPOINT: {
-    PatchPointOpers Op(PatchPoint);
-    StartIdx = Op.getVarIdx();
-    ID = Op.getID();
-    break;
-  }
+  switch (StatePoint->getOpcode()) {
   case TargetOpcode::STATEPOINT: {
-    StatepointOpers Op(PatchPoint);
+    StatepointOpers Op(StatePoint);
     StartIdx = Op.getVarIdx();
     ID = Op.getID();
     break;
@@ -403,26 +373,26 @@ bool StatepointRewrite::rewritePatchpoint(MachineFunction &MF,
     llvm_unreachable("unexpected stackmap opcode");
   }
   MachineRegisterInfo *MRI = &MF.getRegInfo();
-  const auto &IDMap = MRI->getPatchpointIDMap();
+  const auto &IDMap = MRI->getStatePointIDMap();
   if (IDMap.empty())
     return false;
   auto Found = IDMap.find(ID);
   if (Found == IDMap.end())
     return false;
-  // Ready to rebuild the patchpoint.
+  // Ready to rebuild the StatePoint.
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   const TargetInstrInfo *TII = STI.getInstrInfo();
-  MachineInstr *NewMI = MF.CreateMachineInstr(TII->get(PatchPoint->getOpcode()),
-                                              PatchPoint->getDebugLoc(), true);
+  MachineInstr *NewMI = MF.CreateMachineInstr(TII->get(StatePoint->getOpcode()),
+                                              StatePoint->getDebugLoc(), true);
   MachineInstrBuilder MIB(MF, NewMI);
-  for (unsigned i = 0, E = PatchPoint->getNumOperands(); i < E; ++i)
-    MIB.add(PatchPoint->getOperand(i));
+  for (unsigned i = 0, E = StatePoint->getNumOperands(); i < E; ++i)
+    MIB.add(StatePoint->getOperand(i));
 
-  // Check Any Stack Slot overlaps this PatchPoint.
-  SlotIndex Index = Indexes->getInstructionIndex(*PatchPoint);
+  // Check Any Stack Slot overlaps this StatePoint.
+  SlotIndex Index = Indexes->getInstructionIndex(*StatePoint);
   const auto &RegInfoVector = Found->second;
   auto AddStackSlot =
-      [&](const MachineRegisterInfo::PatchpointRegInfo &RegInfo) {
+      [&](const MachineRegisterInfo::StatePointRegInfo &RegInfo) {
         int StackSlot = VRM->getStackSlot(RegInfo.Reg);
         if (StackSlot == VirtRegMap::NO_STACK_SLOT)
           return;
@@ -467,11 +437,11 @@ bool StatepointRewrite::rewritePatchpoint(MachineFunction &MF,
         break;
     }
   }
-  MachineBasicBlock *MBB = PatchPoint->getParent();
-  MachineBasicBlock::iterator Pos = PatchPoint;
+  MachineBasicBlock *MBB = StatePoint->getParent();
+  MachineBasicBlock::iterator Pos = StatePoint;
   MBB->insert(Pos, NewMI);
-  LIS->ReplaceMachineInstrInMaps(*PatchPoint, *NewMI);
-  MBB->erase(PatchPoint);
+  LIS->ReplaceMachineInstrInMaps(*StatePoint, *NewMI);
+  MBB->erase(StatePoint);
   return true;
 }
 

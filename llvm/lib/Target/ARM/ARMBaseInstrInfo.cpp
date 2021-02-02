@@ -1501,6 +1501,7 @@ unsigned ARMBaseInstrInfo::isLoadFromStackSlotPostFE(const MachineInstr &MI,
                                                      int &FrameIndex) const {
   if (MI.getOpcode() == TargetOpcode::STATEPOINT ||
       MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+      MI.getOpcode() == TargetOpcode::TCPATCHPOINT ||
       MI.getOpcode() == TargetOpcode::STACKMAP)
     return false;
   SmallVector<const MachineMemOperand *, 1> Accesses;
@@ -1615,25 +1616,6 @@ void ARMBaseInstrInfo::expandRESTORESP(MachineBasicBlock::iterator MI) const {
         .add(condCodeOp());
   }
   BB->erase(MI);
-}
-
-int ARMBaseInstrInfo::getSPAdjust(const MachineInstr &MI) const {
-  const MachineFunction *MF = MI.getParent()->getParent();
-  const ARMFunctionInfo *AFI = MF->getInfo<ARMFunctionInfo>();
-
-  if (!AFI->isJSFunction() && !AFI->isJSStub())
-    return ARMGenInstrInfo::getSPAdjust(MI);
-  if (MI.isCall()) {
-    if (AFI->isJSStub() || AFI->isJSFunction())
-      return -AFI->popLastSPAdjust();
-  }
-  unsigned FrameSetupOpcode = getCallFrameSetupOpcode();
-  if (MI.getOpcode() == FrameSetupOpcode) {
-    int SPAdj = getFrameSize(MI);
-    AFI->pushLastSPAdjust(SPAdj);
-    return SPAdj;
-  }
-  return 0;
 }
 
 bool ARMBaseInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {

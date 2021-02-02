@@ -298,6 +298,9 @@ bool AArch64FrameLowering::hasFP(const MachineFunction &MF) const {
 /// included as part of the stack frame.
 bool
 AArch64FrameLowering::hasReservedCallFrame(const MachineFunction &MF) const {
+  const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  if (AFI->isJSStub() || AFI->isJSFunction())
+    return false;
   return !MF.getFrameInfo().hasVarSizedObjects();
 }
 
@@ -1839,6 +1842,10 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
         if (FPOffsetFits && PreferFP) // If FP is the best fit, use it.
           UseFP = true;
       }
+    }
+    // Enforce JS msut use FP. Safepoint requires FP.
+    if (AFI->isJSStub() || AFI->isJSFunction()) {
+      UseFP = true;
     }
   }
 

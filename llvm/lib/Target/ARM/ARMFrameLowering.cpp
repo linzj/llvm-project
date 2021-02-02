@@ -944,6 +944,11 @@ ARMFrameLowering::ResolveFrameIndexReference(const MachineFunction &MF,
 
   // If there is a frame pointer, use it when we can.
   if (hasFP(MF) && AFI->hasStackFrame()) {
+    // Enforce JS msut use FP. Safepoint requires FP.
+    if (AFI->isJSStub() || AFI->isJSFunction()) {
+      FrameReg = RegInfo->getFrameRegister(MF);
+      return FPOffset;
+    }
     // Use frame pointer to reference fixed objects. Use it for locals if
     // there are VLAs (and thus the SP isn't reliable as a base).
     if (isFixed || (hasMovingSP && !RegInfo->hasBasePointer(MF))) {
@@ -976,9 +981,6 @@ ARMFrameLowering::ResolveFrameIndexReference(const MachineFunction &MF,
       }
     } else if (Offset > (FPOffset < 0 ? -FPOffset : FPOffset)) {
       // Otherwise, use SP or FP, whichever is closer to the stack slot.
-      FrameReg = RegInfo->getFrameRegister(MF);
-      return FPOffset;
-    } else if (AFI->isJSStub() || AFI->isJSFunction()) {
       FrameReg = RegInfo->getFrameRegister(MF);
       return FPOffset;
     }
@@ -1601,6 +1603,7 @@ static unsigned estimateRSStackSizeLimit(MachineFunction &MF,
         continue;
       if (MI.getOpcode() == TargetOpcode::STATEPOINT ||
           MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+          MI.getOpcode() == TargetOpcode::TCPATCHPOINT ||
           MI.getOpcode() == TargetOpcode::STACKMAP)
         break;
       for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {

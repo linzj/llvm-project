@@ -8880,12 +8880,14 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
   TargetLowering::CallLoweringInfo CLI(DAG);
   populateCallLoweringInfo(CLI, cast<CallBase>(CS.getInstruction()),
                            NumMetaOpers, NumCallArgs, Callee, ReturnTy, true);
-  CLI.IsTailCall = isPatchpointInTailCallPosition(CS);
+  bool IsTailCall = isPatchpointInTailCallPosition(CS);
+  CLI.IsTailCall = IsTailCall;
   assert((!CLI.IsTailCall || !HasDef) &&
          "TailCall should not has a return type");
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
   SDNode *Call;
   assert(CLI.IsTailCall || !HasTailCall);
+  assert(CLI.IsTailCall == IsTailCall);
   if (!CLI.IsTailCall) {
     SDNode *CallEnd = Result.second.getNode();
     if (HasDef && (CallEnd->getOpcode() == ISD::CopyFromReg))
@@ -8920,7 +8922,7 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
   // stack instead.
   // Call Node: Chain, Target, {Args}, [RegMask], [Glue]
   unsigned NumCallRegArgs =
-      Call->getNumOperands() + (CLI.IsTailCall ? 1 : 0) - (HasGlue ? 4 : 3);
+      Call->getNumOperands() + (IsTailCall ? 1 : 0) - (HasGlue ? 4 : 3);
   NumCallRegArgs = IsAnyRegCC ? NumArgs : NumCallRegArgs;
   Ops.push_back(DAG.getTargetConstant(NumCallRegArgs, dl, MVT::i32));
 
@@ -8943,11 +8945,14 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
   addStackMapLiveVars(CS, NumMetaOpers + NumArgs, dl, Ops, *this);
 
   // Push the register mask info.
-  if (NumCallRegArgs) {
+  if (NumCallRegArgs && !IsTailCall) {
+    SDValue val;
     if (HasGlue)
-      Ops.push_back(*(Call->op_end() - 2));
+      val = *(Call->op_end() - 2);
     else
-      Ops.push_back(*(Call->op_end() - 1));
+      val = *(Call->op_end() - 1);
+    assert(isa<RegisterMaskSDNode>(val));
+    Ops.push_back(val);
   }
 
   // Push the chain (this is originally the first operand of the call, but
