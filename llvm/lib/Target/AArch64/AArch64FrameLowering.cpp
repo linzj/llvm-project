@@ -2810,7 +2810,6 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   if (hasFP(MF)) {
     if (AFI->isJSStub()) {
       SavedRegs.set(AArch64::X16);
-      SavedRegs.set(AArch64::X28);
     } else if (AFI->isJSFunction()) {
       SavedRegs.set(AArch64::X27);
       SavedRegs.set(AArch64::X1);

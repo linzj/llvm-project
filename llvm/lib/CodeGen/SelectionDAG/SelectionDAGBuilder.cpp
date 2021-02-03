@@ -11274,8 +11274,8 @@ void SelectionDAGBuilder::visitPatchpoint(const CallBase &CB,
                            ReturnTy, CB.getAttributes().getRetAttrs(), true);
   bool IsTailCall = isPatchpointInTailCallPosition(CB);
   CLI.IsTailCall = IsTailCall;
-  assert((!CLI.IsTailCall || !HasDef) &&
-         "TailCall should not has a return type");
+  if (HasDef && IsTailCall)
+    HasDef = false;
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
   SDNode *Call;
   assert(CLI.IsTailCall || !HasTailCall);
