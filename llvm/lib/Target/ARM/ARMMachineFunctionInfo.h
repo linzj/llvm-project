@@ -136,6 +136,11 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   mutable int LastSPAdjust = 0;
   int FIFPSaveArea0 = -1;
   int FIFPSaveArea1 = -1;
+  int FIJSStubMarker = -1;
+  int FIJSFunctionMarker = -1;
+  int FIContextMarker = -1;
+  int FIArgsCountMarker = -1;
+  int FIWASMMarker = -1;
   bool IsJSFunction = false;
   bool IsJSStub = false;
   bool IsWASM = false;
@@ -268,6 +273,16 @@ public:
   void setJSFunction(bool s) { IsJSFunction = s; }
   void setJSStub(bool s) { IsJSStub = s; }
   void setWASM(bool s) { IsWASM = s; }
+  void setFIJSStubMarker(int FI) { FIJSStubMarker = FI; }
+  void setFIJSFunctionMarker(int FI) { FIJSFunctionMarker = FI; }
+  void setFIContextMarker(int FI) { FIContextMarker = FI; }
+  void setFIArgsCountMarker(int FI) { FIArgsCountMarker = FI; }
+  void setFIWASMMarker(int FI) { FIWASMMarker = FI; }
+  int getFIJSStubMarker() const { return FIJSStubMarker; }
+  int getFIJSFunctionMarker() const { return FIJSFunctionMarker; }
+  int getFIContextMarker() const { return FIContextMarker; }
+  int getFIArgsCountMarker() const { return FIArgsCountMarker; }
+  int getFIWASMMarker() const { return FIWASMMarker; }
 
   DenseMap<unsigned, unsigned> EHPrologueRemappedRegs;
 

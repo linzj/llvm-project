@@ -1360,13 +1360,11 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVZXi), AArch64::X16)
         .addImm(Marker)
         .addImm(AArch64_AM::getShifterImm(AArch64_AM::LSL, 0));
-    MachineFrameInfo &MFI = MF.getFrameInfo();
     const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
     TII->storeRegToStackSlot(MBB, MBBI, AArch64::X16, true,
                              AFI->getFIJSStubMarker(), &AArch64::GPR64RegClass,
                              TRI);
   } else if (AFI->isJSFunction()) {
-    MachineFrameInfo &MFI = MF.getFrameInfo();
     const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
     TII->storeRegToStackSlot(MBB, MBBI, AArch64::X0, true,
                              AFI->getFIArgsCountMarker(),
@@ -2551,7 +2549,6 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   if (hasFP(MF)) {
     if (AFI->isJSStub()) {
       SavedRegs.set(AArch64::X16);
-      SavedRegs.set(AArch64::X28);
     } else if (AFI->isJSFunction()) {
       SavedRegs.set(AArch64::X27);
       SavedRegs.set(AArch64::X1);
