@@ -2442,12 +2442,14 @@ static void stripInvalidMetadataFromInstruction(Instruction &I) {
   // changed once it became dereferenceable. This is no longer true after RS4GC.
   // Similar reasoning applies to invariant.group metadata, which applies to
   // loads within a group.
+  // LINZJ: We need MD_invariant_load to show a load is from root.
   unsigned ValidMetadataAfterRS4GC[] = {LLVMContext::MD_tbaa,
                          LLVMContext::MD_range,
                          LLVMContext::MD_alias_scope,
                          LLVMContext::MD_nontemporal,
                          LLVMContext::MD_nonnull,
                          LLVMContext::MD_align,
+                         LLVMContext::MD_invariant_load,
                          LLVMContext::MD_type};
 
   // Drops all metadata on the instruction other than ValidMetadataAfterRS4GC.
