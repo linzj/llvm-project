@@ -3101,8 +3101,11 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
       }
       // If the frame pointer is required by the ABI, also spill LR so that we
       // emit a complete frame record.
-      if ((requiresAAPCSFrameRecord(MF) ||
-           MF.getTarget().Options.DisableFramePointerElim(MF)) &&
+      // Or a V8CC function has its fp taken for variable arguments access.
+      if (((requiresAAPCSFrameRecord(MF) ||
+            MF.getTarget().Options.DisableFramePointerElim(MF)) ||
+           (MF.getFunction().getCallingConv() == CallingConv::V8CC &&
+            MFI.isFrameAddressTaken())) &&
           !LRSpilled) {
         SavedRegs.set(ARM::LR);
         LRSpilled = true;
