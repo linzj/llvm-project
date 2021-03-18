@@ -1946,7 +1946,10 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
       }
       // If the frame pointer is required by the ABI, also spill LR so that we
       // emit a complete frame record.
-      if (MF.getTarget().Options.DisableFramePointerElim(MF) && !LRSpilled) {
+      // Or a V8CC function has its fp taken for variable arguments access.
+      if ((MF.getTarget().Options.DisableFramePointerElim(MF) && !LRSpilled) ||
+          (MF.getFunction().getCallingConv() == CallingConv::V8CC &&
+           MFI.isFrameAddressTaken())) {
         SavedRegs.set(ARM::LR);
         LRSpilled = true;
         NumGPRSpills++;
