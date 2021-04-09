@@ -3114,6 +3114,8 @@ bool RewriteStatepointsForGC::runOnFunction(Function &F, DominatorTree &DT,
     if (const auto *Call = dyn_cast<CallBase>(&I)) {
       if (isa<GCStatepointInst>(Call))
         return false;
+      if (Call->isInlineAsm())
+        return false;
       if (callsGCLeafFunction(Call, TLI))
         return false;
 
