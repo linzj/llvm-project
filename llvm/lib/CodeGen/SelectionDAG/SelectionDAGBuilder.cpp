@@ -8811,6 +8811,58 @@ void SelectionDAGBuilder::visitStackmap(const CallInst &CI) {
   FuncInfo.MF->getFrameInfo().setHasStackMap();
 }
 
+static const Value *getNoopInputPatchpoint(const Value *V) {
+  while (true) {
+    // Try to look through V1; if V1 is not an instruction, it can't be looked
+    // through.
+    const Instruction *I = dyn_cast<Instruction>(V);
+    if (!I || I->getNumOperands() == 0)
+      return V;
+    const Value *NoopInput = nullptr;
+
+    Value *Op = I->getOperand(0);
+    if (isa<BitCastInst>(I)) {
+      // Look through truly no-op bitcasts.
+      NoopInput = Op;
+    } else if (isa<GetElementPtrInst>(I)) {
+      // Look through getelementptr
+      if (cast<GetElementPtrInst>(I)->hasAllZeroIndices())
+        NoopInput = Op;
+    } else if (isa<IntToPtrInst>(I)) {
+      // Look through inttoptr.
+      // Make sure this isn't a truncating or extending cast.  We could
+      // support this eventually, but don't bother for now.
+      NoopInput = Op;
+    } else if (isa<PtrToIntInst>(I)) {
+      NoopInput = Op;
+    } else if (isa<TruncInst>(I)) {
+      NoopInput = Op;
+    }
+    if (!NoopInput)
+      return V;
+
+    V = NoopInput;
+  }
+}
+
+static bool returnTypeIsEligibleForPatchpointTailCall(const Function *F,
+                                                      const Instruction *I,
+                                                      const ReturnInst *Ret) {
+  // If the block ends with a void return or unreachable, it doesn't matter
+  // what the call's return type is.
+  if (!Ret || Ret->getNumOperands() == 0)
+    return true;
+
+  // If the return value is undef, it doesn't matter what the call's
+  // return type is.
+  if (isa<UndefValue>(Ret->getOperand(0)))
+    return true;
+
+  const Value *RetVal = Ret->getOperand(0), *CallVal = I;
+
+  return getNoopInputPatchpoint(RetVal) == CallVal;
+}
+
 static bool isPatchpointInTailCallPosition(ImmutableCallSite CS) {
   const Instruction *I = CS.getInstruction();
   const BasicBlock *ExitBB = I->getParent();
@@ -8834,7 +8886,8 @@ static bool isPatchpointInTailCallPosition(ImmutableCallSite CS) {
           !isSafeToSpeculativelyExecute(&*BBI))
         return false;
     }
-  return true;
+  const Function *F = ExitBB->getParent();
+  return returnTypeIsEligibleForPatchpointTailCall(F, I, Ret);
 }
 
 /// Lower llvm.experimental.patchpoint directly to its target opcode.
