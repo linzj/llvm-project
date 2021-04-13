@@ -1500,12 +1500,13 @@ MachineBasicBlock *AArch64TargetLowering::EmitInstrWithCustomInserter(
 
   case TargetOpcode::STACKMAP:
   case TargetOpcode::PATCHPOINT:
-  case TargetOpcode::TCPATCHPOINT:
     return emitPatchPoint(MI, BB);
   case TargetOpcode::STATEPOINT:
     // As an implementation detail, STATEPOINT shares the STACKMAP format at
     // this point in the process.  We diverge later.
     return emitPatchPoint(MI, BB);
+  case TargetOpcode::TCPATCHPOINT:
+    return TargetLoweringBase::emitPatchPoint(MI, BB);
 
   case AArch64::CATCHRET:
     return EmitLoweredCatchRet(MI, BB);
@@ -13480,16 +13481,6 @@ bool AArch64TargetLowering::needsFixedCatchObjects() const { return false; }
 MachineBasicBlock *
 AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
                                       MachineBasicBlock *MBB) const {
-  if (MI.getOpcode() == TargetOpcode::TCPATCHPOINT) {
-    for (unsigned OperIdx = MI.getNumOperands() - 1; OperIdx != 0; --OperIdx) {
-      MachineOperand &MO = MI.getOperand(OperIdx);
-      if (MO.isImplicit() && MO.isEarlyClobber() &&
-          MO.getReg() == AArch64::LR) {
-        MI.RemoveOperand(OperIdx);
-        return MBB;
-      }
-    }
-  }
   MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
   MachineFunction &MF = *MI.getMF();
   MI.addOperand(MF, MachineOperand::CreateReg(AArch64::LR, true, true));

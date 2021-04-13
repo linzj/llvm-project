@@ -580,6 +580,9 @@ static bool isNoReturnDef(const MachineOperand &MO) {
   const MachineInstr &MI = *MO.getParent();
   if (!MI.isCall())
     return false;
+  // Tail calls never return.
+  if (MI.isReturn())
+    return true;
   const MachineBasicBlock &MBB = *MI.getParent();
   if (!MBB.succ_empty())
     return false;
