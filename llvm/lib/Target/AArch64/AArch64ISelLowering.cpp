@@ -3624,12 +3624,13 @@ MachineBasicBlock *AArch64TargetLowering::EmitInstrWithCustomInserter(
     [[fallthrough]];
   case TargetOpcode::STACKMAP:
   case TargetOpcode::PATCHPOINT:
-  case TargetOpcode::TCPATCHPOINT:
     return emitPatchPoint(MI, BB);
-
   case TargetOpcode::PATCHABLE_EVENT_CALL:
   case TargetOpcode::PATCHABLE_TYPED_EVENT_CALL:
     return BB;
+
+  case TargetOpcode::TCPATCHPOINT:
+    return TargetLoweringBase::emitPatchPoint(MI, BB);
 
   case AArch64::CATCHRET:
     return EmitLoweredCatchRet(MI, BB);
@@ -33046,16 +33047,6 @@ bool AArch64TargetLowering::needsFixedCatchObjects() const { return true; }
 MachineBasicBlock *
 AArch64TargetLowering::emitPatchPoint(MachineInstr &MI,
                                       MachineBasicBlock *MBB) const {
-  if (MI.getOpcode() == TargetOpcode::TCPATCHPOINT) {
-    for (unsigned OperIdx = MI.getNumOperands() - 1; OperIdx != 0; --OperIdx) {
-      MachineOperand &MO = MI.getOperand(OperIdx);
-      if (MO.isImplicit() && MO.isEarlyClobber() &&
-          MO.getReg() == AArch64::LR) {
-        MI.removeOperand(OperIdx);
-        return MBB;
-      }
-    }
-  }
   MachineBasicBlock *MBB2 = TargetLoweringBase::emitPatchPoint(MI, MBB);
   // These pseudo instructions may be expanded to a call, which clobbers LR.
   // STATEPOINT already carries an implicit LR def added in
