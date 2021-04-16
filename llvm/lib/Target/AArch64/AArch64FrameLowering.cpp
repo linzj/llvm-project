@@ -2765,7 +2765,6 @@ bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
   // No need to do anything.
   if (CSI.empty())
     return false;
-  int FixedOffset;
   if (AFI->isJSStub()) {
     AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(8, -24));
   } else {

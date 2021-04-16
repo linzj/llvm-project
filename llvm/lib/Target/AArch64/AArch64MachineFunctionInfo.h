@@ -127,7 +127,6 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   unsigned TaggedBasePointerOffset = 0;
 
   /// V8/Dart
-  mutable int LastSPAdjust = 0;
   int FIJSStubMarker = -1;
   int FIJSFunctionMarker = -1;
   int FIContextMarker = -1;

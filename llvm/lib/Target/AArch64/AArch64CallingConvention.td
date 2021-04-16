@@ -522,8 +522,10 @@ def CC_AArch64_V8 : CallingConv<[
   CCIfType<
       [i64],
       CCAssignToRegWithShadow<
-          [X0, X1, X2, X3, X4, X5, X6, X7, X11, X19, X20, X21, X22, X24, X25, X26, X27, X28],
-          [W0, W1, W2, W3, W4, W5, W6, W7, W11, W19, W20, W21, W22, W24, X25, W26, W27, W28]>>,
+          [X0, X1, X2, X3, X4, X5, X6, X7, X8, X9,
+            X11, X19, X20, X21, X22, X24, X25, X26, X27, X28],
+          [W0, W1, W2, W3, W4, W5, W6, W7, W8, W9,
+            W11, W19, W20, W21, W22, W24, X25, W26, W27, W28]>>,
   CCIfType<[f16], CCAssignToRegWithShadow<[H0, H1, H2, H3, H4, H5, H6, H7],
                                           [Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7]>>,
   CCIfType<[f32], CCAssignToRegWithShadow<[S0, S1, S2, S3, S4, S5, S6, S7],
