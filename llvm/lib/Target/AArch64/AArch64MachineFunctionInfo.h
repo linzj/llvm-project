@@ -241,7 +241,6 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   Register EarlyAllocSMESaveBuffer = AArch64::NoRegister;
 
   /// V8/Dart
-  mutable int LastSPAdjust = 0;
   int FIJSStubMarker = -1;
   int FIJSFunctionMarker = -1;
   int FIContextMarker = -1;
