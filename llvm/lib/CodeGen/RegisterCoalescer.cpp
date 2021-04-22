@@ -282,6 +282,9 @@ namespace {
     /// Return true if a copy involving a physreg should be joined.
     bool canJoinPhys(const CoalescerPair &CP);
 
+    /// Return true if a copy involving a virtreg should be joined.
+    bool canJoinVirt(const CoalescerPair &CP);
+
     /// Replace all defs and uses of SrcReg to DstReg and update the subregister
     /// number if it is not zero. If DstReg is a physical register and the
     /// existing subregister number of the def / use being updated is not zero,
@@ -1784,6 +1787,29 @@ bool RegisterCoalescer::canJoinPhys(const CoalescerPair &CP) {
   return false;
 }
 
+bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
+  // The goal is to filter out the copy from reserved phys.
+  LiveInterval &JoinVInt = LIS->getInterval(CP.getDstReg());
+
+  if (!JoinVInt.containsOneValue())
+    return true;
+
+  const VNInfo *VNI = JoinVInt.getValNumInfo(0);
+  const SlotIndexes &Indexes = *LIS->getSlotIndexes();
+  MachineInstr *DefMI = Indexes.getInstructionFromIndex(VNI->def);
+  if (!DefMI->isFullCopy())
+    return true;
+  Register SrcReg = DefMI->getOperand(1).getReg();
+  if (!Register::isPhysicalRegister(SrcReg))
+    return true;
+  if (!MRI->isReserved(SrcReg))
+    return true;
+
+  LLVM_DEBUG(dbgs() << "\tCannot join virtual register single defined by a "
+                       "reserved register into virtual register.\n");
+  return false;
+}
+
 bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
   Again = false;
   LLVM_DEBUG(dbgs() << LIS->getInstructionIndex(*CopyMI) << '\t' << *CopyMI);
@@ -1892,6 +1918,9 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
         dbgs() << printReg(CP.getSrcReg(), TRI) << " in "
                << printReg(CP.getDstReg(), TRI, CP.getSrcIdx()) << '\n';
     });
+
+    if (!canJoinVirt(CP))
+      return false;
   }
 
   ShrinkMask = LaneBitmask::getNone();
