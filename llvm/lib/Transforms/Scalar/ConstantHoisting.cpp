@@ -361,9 +361,28 @@ void ConstantHoistingPass::collectConstantCandidates(
   unsigned Cost;
   // Ask the target about the cost of materializing the constant for the given
   // instruction and operand index.
+  auto GetCallCost = [this, Idx, ConstInt](CallBase *Inst) {
+    if (isa<InlineAsm>(Inst->getCalledValue())) {
+      return TTI->getIntImmCostInst(Inst->getOpcode(), Idx,
+                                    ConstInt->getValue(), ConstInt->getType());
+    }
+    if (Function *F = Inst->getCalledFunction()) {
+      if (F->isDeclaration()) {
+        // Is this an LLVM intrinsic or a target-specific intrinsic?
+        unsigned IID = F->getIntrinsicID();
+        if (IID)
+          return TTI->getIntImmCostIntrin(IID, Idx, ConstInt->getValue(),
+                                          ConstInt->getType());
+      }
+    }
+    return TTI->getIntImmCostInst(Inst->getOpcode(), Idx, ConstInt->getValue(),
+                                  ConstInt->getType());
+  };
   if (auto IntrInst = dyn_cast<IntrinsicInst>(Inst))
     Cost = TTI->getIntImmCostIntrin(IntrInst->getIntrinsicID(), Idx,
                                     ConstInt->getValue(), ConstInt->getType());
+  else if (isa<CallBase>(Inst))
+    Cost = GetCallCost(dyn_cast<CallBase>(Inst));
   else
     Cost = TTI->getIntImmCostInst(Inst->getOpcode(), Idx, ConstInt->getValue(),
                                   ConstInt->getType());
