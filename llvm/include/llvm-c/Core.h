@@ -2395,6 +2395,13 @@ void LLVMAliasSetAliasee(LLVMValueRef Alias, LLVMValueRef Aliasee);
 void LLVMDeleteFunction(LLVMValueRef Fn);
 
 /**
+ * Delete the body of a function.
+ *
+ * @see llvm::Function::dropAllReferences()
+ */
+void LLVMDeleteFunctionBody(LLVMValueRef Fn);
+
+/**
  * Check whether the given function has a personality function.
  *
  * @see llvm::Function::hasPersonalityFn()
