@@ -2539,6 +2539,10 @@ void LLVMDeleteFunction(LLVMValueRef Fn) {
   unwrap<Function>(Fn)->eraseFromParent();
 }
 
+void LLVMDeleteFunctionBody(LLVMValueRef Fn) {
+  unwrap<Function>(Fn)->dropAllReferences();
+}
+
 LLVMBool LLVMHasPersonalityFn(LLVMValueRef Fn) {
   return unwrap<Function>(Fn)->hasPersonalityFn();
 }

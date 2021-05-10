@@ -3113,6 +3113,13 @@ LLVM_C_ABI void LLVMAliasSetAliasee(LLVMValueRef Alias, LLVMValueRef Aliasee);
 LLVM_C_ABI void LLVMDeleteFunction(LLVMValueRef Fn);
 
 /**
+ * Delete the body of a function.
+ *
+ * @see llvm::Function::dropAllReferences()
+ */
+void LLVMDeleteFunctionBody(LLVMValueRef Fn);
+
+/**
  * Check whether the given function has a personality function.
  *
  * @see llvm::Function::hasPersonalityFn()
