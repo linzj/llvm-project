@@ -2052,6 +2052,22 @@ bool RegisterCoalescer::joinReservedPhysReg(CoalescerPair &CP) {
 
   assert(RHS.containsOneValue() && "Invalid join with reserved register");
 
+  auto AllPhysDefFromVirt = [](const MachineRegisterInfo *MRI,
+                               const CoalescerPair &CP) {
+    if (!CP.isFlipped())
+      return false;
+
+    unsigned SrcReg = CP.getSrcReg();
+    for (const MachineOperand &MO :
+         make_range(MRI->def_begin(CP.getDstReg()), MRI->def_end())) {
+      const MachineInstr *MI = MO.getParent();
+      if (!MI->isFullCopy())
+        return false;
+      if (MI->getOperand(1).getReg() != SrcReg)
+        return false;
+    }
+    return true;
+  };
   // Optimization for reserved registers like ESP. We can only merge with a
   // reserved physreg if RHS has a single value that is a copy of DstReg.
   // The live range of the reserved register will look like a set of dead defs
@@ -2059,7 +2075,7 @@ bool RegisterCoalescer::joinReservedPhysReg(CoalescerPair &CP) {
 
   // Deny any overlapping intervals.  This depends on all the reserved
   // register live ranges to look like dead defs.
-  if (!MRI->isConstantPhysReg(DstReg)) {
+  if (!MRI->isConstantPhysReg(DstReg) && !AllPhysDefFromVirt(MRI, CP)) {
     for (MCRegUnitIterator UI(DstReg, TRI); UI.isValid(); ++UI) {
       // Abort if not all the regunits are reserved.
       for (MCRegUnitRootIterator RI(*UI, TRI); RI.isValid(); ++RI) {
