@@ -50,6 +50,9 @@ static inline bool isCalleeSavedRegister(MCRegister Reg,
 }
 
 class ARMBaseRegisterInfo : public ARMGenRegisterInfo {
+private:
+  const Triple &TT;
+
 protected:
   /// BasePtr - ARM physical register used as a base ptr in complex stack
   /// frames. I.e., when we need a 3rd base, not just SP and FP, due to
@@ -57,7 +60,7 @@ protected:
   unsigned BasePtr = ARM::R6;
 
   // Can be only subclassed.
-  explicit ARMBaseRegisterInfo();
+  explicit ARMBaseRegisterInfo(const Triple &TT);
 
 public:
   /// Code Generation virtual methods...
@@ -89,6 +92,10 @@ public:
                        MCRegister PhysReg) const override;
   bool isInlineAsmReadOnlyReg(const MachineFunction &MF,
                               MCRegister PhysReg) const override;
+
+  /// Returns true for registers that hold constant values in the Dart
+  /// environment (e.g. the object pool and dispatch table registers).
+  bool isDartConstantPhysReg(MCRegister PhysReg) const;
 
   const TargetRegisterClass *
   getPointerRegClass(unsigned Kind = 0) const override;

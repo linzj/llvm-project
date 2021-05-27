@@ -2501,7 +2501,10 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   // Build a sequence of copy-to-reg nodes chained together with token chain
   // and flag operands which copy the outgoing args into the appropriate regs.
   SDValue InGlue;
+  const ARMBaseRegisterInfo *TRI = Subtarget->getRegisterInfo();
   for (const auto &[Reg, N] : RegsToPass) {
+    if (TRI->isDartConstantPhysReg(Reg))
+      continue;
     Chain = DAG.getCopyToReg(Chain, dl, Reg, N, InGlue);
     InGlue = Chain.getValue(1);
   }

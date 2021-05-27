@@ -10707,6 +10707,9 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Build a sequence of copy-to-reg nodes chained together with token chain
   // and flag operands which copy the outgoing args into the appropriate regs.
   for (auto &RegToPass : RegsToPass) {
+    const auto TRI = Subtarget->getRegisterInfo();
+    if (TRI->isDartConstantPhysReg(RegToPass.first))
+      continue;
     Chain = DAG.getCopyToReg(Chain, DL, RegToPass.first,
                              RegToPass.second, InGlue);
     InGlue = Chain.getValue(1);

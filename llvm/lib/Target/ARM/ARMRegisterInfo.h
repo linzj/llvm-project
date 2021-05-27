@@ -19,8 +19,9 @@ namespace llvm {
 
 struct ARMRegisterInfo : public ARMBaseRegisterInfo {
   virtual void anchor();
+
 public:
-  ARMRegisterInfo();
+  explicit ARMRegisterInfo(const Triple &);
 };
 
 } // end namespace llvm

@@ -26,7 +26,7 @@
 using namespace llvm;
 
 ARMInstrInfo::ARMInstrInfo(const ARMSubtarget &STI)
-    : ARMBaseInstrInfo(STI, RI) {}
+    : ARMBaseInstrInfo(STI, RI), RI(STI.getTargetTriple()) {}
 
 /// Return the noop instruction to use for a noop.
 MCInst ARMInstrInfo::getNop() const {

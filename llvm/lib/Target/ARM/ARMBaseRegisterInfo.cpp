@@ -54,8 +54,8 @@
 
 using namespace llvm;
 
-ARMBaseRegisterInfo::ARMBaseRegisterInfo()
-    : ARMGenRegisterInfo(ARM::LR, 0, 0, ARM::PC) {
+ARMBaseRegisterInfo::ARMBaseRegisterInfo(const Triple &_TT)
+    : ARMGenRegisterInfo(ARM::LR, 0, 0, ARM::PC), TT(_TT) {
   ARM_MC::initLLVMToCVRegMapping(this);
 }
 
@@ -311,6 +311,18 @@ bool ARMBaseRegisterInfo::isInlineAsmReadOnlyReg(const MachineFunction &MF,
     markSuperRegs(Reserved, BasePtr);
   assert(checkAllSuperRegsMarked(Reserved));
   return Reserved.test(PhysReg.id());
+}
+
+bool ARMBaseRegisterInfo::isDartConstantPhysReg(MCRegister PhysReg) const {
+  if (TT.getEnvironment() == Triple::Dart) {
+    switch (PhysReg) {
+    case ARM::R5:
+    case ARM::R7:
+    case ARM::R10:
+      return true;
+    }
+  }
+  return false;
 }
 
 const TargetRegisterClass *

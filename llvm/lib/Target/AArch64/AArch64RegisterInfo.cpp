@@ -636,6 +636,28 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
   return !isReservedReg(MF, PhysReg);
 }
 
+// Returns true for registers that hold constant values in the Dart
+// environment. Note that the TableGen-generated isConstantPhysReg() is final,
+// so this cannot be modeled as an override of it.
+bool AArch64RegisterInfo::isDartConstantPhysReg(MCRegister PhysReg) const {
+  if (TT.getEnvironment() == Triple::Dart) {
+    switch (PhysReg) {
+    case AArch64::X27:
+    case AArch64::X21:
+    case AArch64::X28:
+    case AArch64::X22:
+    case AArch64::X26:
+    case AArch64::W27:
+    case AArch64::W21:
+    case AArch64::W28:
+    case AArch64::W22:
+    case AArch64::W26:
+      return true;
+    }
+  }
+  return isConstantPhysReg(PhysReg);
+}
+
 const TargetRegisterClass *
 AArch64RegisterInfo::getPointerRegClass(unsigned Kind) const {
   return &AArch64::GPR64spRegClass;

@@ -105,6 +105,9 @@ public:
                      MCRegister PhysReg) const override;
   bool isAsmClobberable(const MachineFunction &MF,
                        MCRegister PhysReg) const override;
+  /// Returns true for registers that hold constant values in the Dart
+  /// environment (in addition to the architectural zero registers).
+  bool isDartConstantPhysReg(MCRegister PhysReg) const;
   const TargetRegisterClass *
   getPointerRegClass(unsigned Kind = 0) const override;
   const TargetRegisterClass *

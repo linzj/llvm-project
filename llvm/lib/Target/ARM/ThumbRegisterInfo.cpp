@@ -36,7 +36,8 @@ extern cl::opt<bool> ReuseFrameIndexVals;
 using namespace llvm;
 
 ThumbRegisterInfo::ThumbRegisterInfo(const ARMSubtarget &STI)
-    : IsThumb1Only(STI.isThumb1Only()) {}
+    : ARMBaseRegisterInfo(STI.getTargetTriple()),
+      IsThumb1Only(STI.isThumb1Only()) {}
 
 const TargetRegisterClass *
 ThumbRegisterInfo::getLargestLegalSuperClass(const TargetRegisterClass *RC,
