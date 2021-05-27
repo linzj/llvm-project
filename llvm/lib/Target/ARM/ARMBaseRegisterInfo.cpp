@@ -54,8 +54,8 @@
 
 using namespace llvm;
 
-ARMBaseRegisterInfo::ARMBaseRegisterInfo()
-    : ARMGenRegisterInfo(ARM::LR, 0, 0, ARM::PC) {}
+ARMBaseRegisterInfo::ARMBaseRegisterInfo(const Triple &_TT)
+    : ARMGenRegisterInfo(ARM::LR, 0, 0, ARM::PC), TT(_TT) {}
 
 static unsigned getFramePointerReg(const ARMSubtarget &STI) {
   return STI.useR7AsFramePointer() ? ARM::R7 : ARM::R11;
@@ -254,6 +254,18 @@ getReservedRegs(const MachineFunction &MF) const {
 bool ARMBaseRegisterInfo::
 isAsmClobberable(const MachineFunction &MF, unsigned PhysReg) const {
   return !getReservedRegs(MF).test(PhysReg);
+}
+
+bool ARMBaseRegisterInfo::isConstantPhysReg(unsigned PhysReg) const {
+  if (TT.getEnvironment() == Triple::Dart) {
+    switch (PhysReg) {
+    case ARM::R5:
+    case ARM::R7:
+    case ARM::R10:
+      return true;
+    }
+  }
+  return false;
 }
 
 const TargetRegisterClass *

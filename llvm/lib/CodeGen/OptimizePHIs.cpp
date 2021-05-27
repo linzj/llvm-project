@@ -105,7 +105,7 @@ bool OptimizePHIs::IsSingleValuePHICycle(MachineInstr *MI,
     return true;
 
   // Don't scan crazily complex things.
-  if (PHIsInCycle.size() == 16)
+  if (PHIsInCycle.size() == 64)
     return false;
 
   // Scan the PHI operands.
@@ -116,7 +116,7 @@ bool OptimizePHIs::IsSingleValuePHICycle(MachineInstr *MI,
     MachineInstr *SrcMI = MRI->getVRegDef(SrcReg);
 
     // Skip over register-to-register moves.
-    if (SrcMI && SrcMI->isCopy() && !SrcMI->getOperand(0).getSubReg() &&
+    while (SrcMI && SrcMI->isCopy() && !SrcMI->getOperand(0).getSubReg() &&
         !SrcMI->getOperand(1).getSubReg() &&
         Register::isVirtualRegister(SrcMI->getOperand(1).getReg())) {
       SrcReg = SrcMI->getOperand(1).getReg();

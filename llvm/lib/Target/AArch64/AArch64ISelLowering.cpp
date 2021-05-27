@@ -4224,6 +4224,9 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // and flag operands which copy the outgoing args into the appropriate regs.
   SDValue InFlag;
   for (auto &RegToPass : RegsToPass) {
+    const auto TRI = Subtarget->getRegisterInfo();
+    if (TRI->isConstantPhysReg(RegToPass.first))
+      continue;
     Chain = DAG.getCopyToReg(Chain, DL, RegToPass.first,
                              RegToPass.second, InFlag);
     InFlag = Chain.getValue(1);

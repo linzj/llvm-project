@@ -24,7 +24,7 @@ namespace llvm {
 
 struct ThumbRegisterInfo : public ARMBaseRegisterInfo {
 public:
-  ThumbRegisterInfo();
+  explicit ThumbRegisterInfo(const Triple &);
 
   const TargetRegisterClass *
   getLargestLegalSuperClass(const TargetRegisterClass *RC,

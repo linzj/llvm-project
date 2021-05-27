@@ -61,8 +61,6 @@ private:
 
   bool removeVarFromStatepoint(MachineFunction &MF, MachineInstr *MI);
 
-  void replaceDstWithSrc(unsigned Dst, unsigned Src);
-
   MachineRegisterInfo *MRI;
   const TargetInstrInfo *TII;
 };
@@ -117,8 +115,8 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   MRI = &MF.getRegInfo();
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   TII = STI.getInstrInfo();
-  std::unordered_set<MachineInstr *> RemoveSet;
-  std::unordered_set<MachineInstr *> PHIs;
+  SmallPtrSet<MachineInstr *, 8> RemoveSet;
+  SmallVector<MachineInstr *, 8> PHIs, PHIs2;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
@@ -145,75 +143,16 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
         }
         // Replace Dst with Src.
         Register Dst = MI.getOperand(0).getReg();
-        replaceDstWithSrc(Dst, Src);
-        RemoveSet.emplace(&MI);
+        MRI->replaceRegWith(Dst, Src);
+        RemoveSet.insert(&MI);
       } else if (MI.isPHI()) {
-        PHIs.emplace(&MI);
+        PHIs.emplace_back(&MI);
       }
     }
   }
   if (RemoveSet.empty())
     return false;
-  // Remove PHIs
-  bool Changed;
-  do {
-    Changed = false;
-    for (auto It = PHIs.begin(); It != PHIs.end();) {
-      auto MPhi = *It;
-      // Preprocess phi. So that all the copy defined operands will be replaced
-      // to their sources.
-      for (unsigned I = 1, E = MPhi->getNumOperands(); I < E; I += 2) {
-        MachineOperand &MO = MPhi->getOperand(I);
-        Register Reg = MO.getReg();
-        MachineInstr *MaybeCopy = getSingleDef(*MRI, Reg);
-        if (!MaybeCopy)
-          continue;
-        if (!MaybeCopy->isFullCopy())
-          continue;
-        Register SrcReg = MaybeCopy->getOperand(1).getReg();
-        if (!Register::isVirtualRegister(SrcReg))
-          continue;
-        Register DstReg = MaybeCopy->getOperand(0).getReg();
-        // ARM use copy to cast from FP to SI. Check it.
-        if (MRI->getRegClass(DstReg) != MRI->getRegClass(SrcReg))
-          continue;
-        LLVM_DEBUG(dbgs() << "foldRelocateDef: Replacing Copy " << *MaybeCopy
-                          << " with " << printReg(SrcReg) << " for " << *MPhi);
-        replaceDstWithSrc(DstReg, SrcReg);
-        RemoveSet.emplace(MaybeCopy);
-        Changed = true;
-      }
-      Register FirstReg;
-      Register MPhiDef = MPhi->getOperand(0).getReg();
-      bool MPhiOneDef = MRI->hasOneDef(MPhiDef);
-      for (unsigned I = 1, E = MPhi->getNumOperands(); I < E; I += 2) {
-        Register MaybeFirstReg = MPhi->getOperand(I).getReg();
-        if (MaybeFirstReg != MPhiDef) {
-          FirstReg = MaybeFirstReg;
-          break;
-        }
-      }
-      bool NotEqualToFirstReg = false;
-      for (unsigned I = 3, E = MPhi->getNumOperands(); I < E; I += 2) {
-        const MachineOperand &MO = MPhi->getOperand(I);
-        if (FirstReg != MO.getReg() &&
-            (MO.getReg() != MPhiDef || !MPhiOneDef)) {
-          NotEqualToFirstReg = true;
-          break;
-        }
-      }
-      if (NotEqualToFirstReg) {
-        ++It;
-        continue;
-      }
-      LLVM_DEBUG(dbgs() << "foldRelocateDef: Replacing Phi" << *MPhi << " with "
-                        << printReg(FirstReg) << "\n");
-      replaceDstWithSrc(MPhi->getOperand(0).getReg(), FirstReg);
-      RemoveSet.emplace(MPhi);
-      Changed = true;
-      PHIs.erase(It++);
-    }
-  } while (Changed);
+
   for (auto MI : RemoveSet) {
     MI->removeFromParent();
   }
@@ -290,18 +229,6 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
   MBB->insert(Pos, NewMI);
   MBB->erase(StatePoint);
   return !IDMap.empty();
-}
-
-void StatepointSimplify::replaceDstWithSrc(unsigned Dst, unsigned Src) {
-  LLVM_DEBUG(dbgs() << "Replace the use of " << printReg(Dst) << " with "
-                    << printReg(Src) << "\n");
-  for (auto it = MRI->use_begin(Dst); it != MRI->use_end();) {
-    auto &MO = *it;
-    ++it;
-    LLVM_DEBUG(dbgs() << "setReg for " << MO << " in MI " << *MO.getParent()
-                      << '\n');
-    MO.setReg(Src);
-  }
 }
 
 #undef DEBUG_TYPE

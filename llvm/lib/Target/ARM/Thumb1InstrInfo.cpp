@@ -20,7 +20,7 @@
 using namespace llvm;
 
 Thumb1InstrInfo::Thumb1InstrInfo(const ARMSubtarget &STI)
-    : ARMBaseInstrInfo(STI), RI() {}
+    : ARMBaseInstrInfo(STI), RI(STI.getTargetTriple()) {}
 
 /// Return the noop instruction to use for a noop.
 void Thumb1InstrInfo::getNoop(MCInst &NopInst) const {

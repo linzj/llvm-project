@@ -267,6 +267,21 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
 }
 
 bool AArch64RegisterInfo::isConstantPhysReg(unsigned PhysReg) const {
+  if (TT.getEnvironment() == Triple::Dart) {
+    switch (PhysReg) {
+    case AArch64::X27:
+    case AArch64::X21:
+    case AArch64::X28:
+    case AArch64::X22:
+    case AArch64::X26:
+    case AArch64::W27:
+    case AArch64::W21:
+    case AArch64::W28:
+    case AArch64::W22:
+    case AArch64::W26:
+      return true;
+    }
+  }
   return PhysReg == AArch64::WZR || PhysReg == AArch64::XZR;
 }
 

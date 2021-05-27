@@ -95,6 +95,9 @@ static inline bool isCalleeSavedRegister(unsigned Reg,
 }
 
 class ARMBaseRegisterInfo : public ARMGenRegisterInfo {
+private:
+  const Triple &TT;
+
 protected:
   /// BasePtr - ARM physical register used as a base ptr in complex stack
   /// frames. I.e., when we need a 3rd base, not just SP and FP, due to
@@ -102,7 +105,7 @@ protected:
   unsigned BasePtr = ARM::R6;
 
   // Can be only subclassed.
-  explicit ARMBaseRegisterInfo();
+  explicit ARMBaseRegisterInfo(const Triple &TT);
 
   // Return the opcode that implements 'Op', or 0 if no opcode
   unsigned getOpcode(int Op) const;
@@ -134,7 +137,9 @@ public:
 
   BitVector getReservedRegs(const MachineFunction &MF) const override;
   bool isAsmClobberable(const MachineFunction &MF,
-                       unsigned PhysReg) const override;
+                        unsigned PhysReg) const override;
+
+  bool isConstantPhysReg(unsigned PhysReg) const override;
 
   const TargetRegisterClass *
   getPointerRegClass(const MachineFunction &MF,

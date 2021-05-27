@@ -12,6 +12,7 @@
 
 #include "Thumb2InstrInfo.h"
 #include "ARMMachineFunctionInfo.h"
+#include "ARMSubtarget.h"
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -39,7 +40,7 @@ OldT2IfCvt("old-thumb2-ifcvt", cl::Hidden,
            cl::init(false));
 
 Thumb2InstrInfo::Thumb2InstrInfo(const ARMSubtarget &STI)
-    : ARMBaseInstrInfo(STI) {}
+    : ARMBaseInstrInfo(STI), RI(STI.getTargetTriple()) {}
 
 /// Return the noop instruction to use for a noop.
 void Thumb2InstrInfo::getNoop(MCInst &NopInst) const {
