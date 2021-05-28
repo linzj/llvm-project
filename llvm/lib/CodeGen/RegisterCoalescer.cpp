@@ -1789,6 +1789,20 @@ bool RegisterCoalescer::canJoinPhys(const CoalescerPair &CP) {
 
 bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
   // The goal is to filter out the copy from reserved phys.
+  // So that coalescing will not detain the valno of a vreg defined by a
+  // reserved phys reg. Here is the case from arm64's extra spill.
+  // When coalescing %567 which is a phi, and defined by multiple vals
+  // including a vreg which is singly defined by a reserved reg.
+  // if %567 is coalesced into %456, which makes %456 has multiple defs.
+  // the coalescing %NULL_REG into %456 will not occur.
+  //  %456 = COPY %NULL_REG
+  //  ...
+  //  B1:
+  //  ...
+  //  %567 = COPY %456 //phi
+  //
+  //  B2:
+  //  %567 = COPY %444
   LiveInterval &JoinVInt = LIS->getInterval(CP.getDstReg());
 
   if (!JoinVInt.containsOneValue())
@@ -1799,10 +1813,19 @@ bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
   MachineInstr *DefMI = Indexes.getInstructionFromIndex(VNI->def);
   if (!DefMI->isFullCopy())
     return true;
+
   Register SrcReg = DefMI->getOperand(1).getReg();
+  // Check if is a reserved phys regs.
   if (!Register::isPhysicalRegister(SrcReg))
     return true;
   if (!MRI->isReserved(SrcReg))
+    return true;
+
+  // Check if src of coalescing is singly defined.
+  // If so then the src is not a phi. Our goal is to deal with phi.
+  // Not other scenario.
+  LiveInterval &CSrcInt = LIS->getInterval(CP.getSrcReg());
+  if (CSrcInt.containsOneValue())
     return true;
 
   LLVM_DEBUG(dbgs() << "\tCannot join virtual register single defined by a "
