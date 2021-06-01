@@ -396,6 +396,7 @@ void MachineRegisterInfo::replaceRegWith(Register FromReg, Register ToReg) {
       O.setReg(ToReg);
     }
   }
+  updateJoinCopy(FromReg, ToReg);
 }
 
 /// getVRegDef - Return the machine instr that defines the specified virtual
