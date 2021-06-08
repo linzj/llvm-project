@@ -275,6 +275,10 @@ struct PartiallyConstructedSafepointRecord {
   /// They are not included into 'LiveSet' field.
   /// Maps rematerialized copy to it's original value.
   RematerializedValueMapTy RematerializedValues;
+
+  // Only valid for invoke inst.
+  StatepointLiveSetTy NormalLiveSet;
+  StatepointLiveSetTy UnwindLiveSet;
 };
 
 struct RematerizlizationCandidateRecord {
@@ -375,6 +379,18 @@ static std::string suffixed_name_or(Value *V, StringRef Suffix,
   return V->hasName() ? (V->getName() + Suffix).str() : DefaultName.str();
 }
 
+static void findInvokeLiveSet(GCPtrLivenessData &OriginalLivenessData,
+                              const StatepointLiveSetTy &LiveSet,
+                              StatepointLiveSetTy &BlockLiveSet,
+                              BasicBlock *Block) {
+  auto &LiveIn = OriginalLivenessData.LiveIn[Block];
+  for (Value *L : LiveSet) {
+    if (LiveIn.count(L) == 0)
+      continue;
+    BlockLiveSet.insert(L);
+  }
+}
+
 // Conservatively identifies any definitions which might be live at the
 // given instruction. The  analysis is performed immediately before the
 // given instruction. Values defined by that instruction are not considered
@@ -395,6 +411,13 @@ static void analyzeParsePointLiveness(
     dbgs() << "Number live values: " << LiveSet.size() << "\n";
   }
   Result.LiveSet = LiveSet;
+
+  if (auto II = dyn_cast<InvokeInst>(Call)) {
+    findInvokeLiveSet(OriginalLivenessData, LiveSet, Result.NormalLiveSet,
+                      II->getNormalDest());
+    findInvokeLiveSet(OriginalLivenessData, LiveSet, Result.UnwindLiveSet,
+                      II->getUnwindDest());
+  }
 }
 
 /// Returns true if V is a known base.
@@ -1578,7 +1601,8 @@ static AttributeList legalizeCallAttributes(CallBase *Call, bool IsMemIntrinsic,
 static void CreateGCRelocates(ArrayRef<Value *> LiveVariables,
                               ArrayRef<Value *> BasePtrs,
                               Instruction *StatepointToken,
-                              IRBuilder<> &Builder, GCStrategy *GC) {
+                              IRBuilder<> &Builder, GCStrategy *GC,
+                              const StatepointLiveSetTy *FilterLiveInSet) {
   if (LiveVariables.empty())
     return;
 
@@ -1615,6 +1639,9 @@ static void CreateGCRelocates(ArrayRef<Value *> LiveVariables,
   DenseMap<Type *, Function *> TypeToDeclMap;
 
   for (unsigned i = 0; i < LiveVariables.size(); i++) {
+    if (FilterLiveInSet && FilterLiveInSet->count(LiveVariables[i]) == 0) {
+      continue;
+    }
     // Generate the gc.relocate call and save the result
     Value *BaseIdx = Builder.getInt32(FindIndex(LiveVariables, BasePtrs[i]));
     Value *LiveIdx = Builder.getInt32(i);
@@ -1905,6 +1932,7 @@ makeStatepointExplicitImpl(CallBase *Call, /* to replace */
 
   // Create the statepoint given all the arguments
   GCStatepointInst *Token = nullptr;
+  const StatepointLiveSetTy *NormalLiveSet = nullptr;
   if (auto *CI = dyn_cast<CallInst>(Call)) {
     CallInst *SPCall = Builder.CreateGCStatepointCall(
         StatepointID, NumPatchBytes, CallTarget, Flags, CallArgs,
@@ -1927,6 +1955,7 @@ makeStatepointExplicitImpl(CallBase *Call, /* to replace */
     Builder.SetCurrentDebugLocation(CI->getNextNode()->getDebugLoc());
   } else {
     auto *II = cast<InvokeInst>(Call);
+    NormalLiveSet = &Result.NormalLiveSet;
 
     // Insert the new invoke into the old block.  We'll remove the old one in a
     // moment at which point this will become the new terminator for the
@@ -1958,7 +1987,8 @@ makeStatepointExplicitImpl(CallBase *Call, /* to replace */
     Instruction *ExceptionalToken = UnwindBlock->getLandingPadInst();
     Result.UnwindToken = ExceptionalToken;
 
-    CreateGCRelocates(LiveVariables, BasePtrs, ExceptionalToken, Builder, GC);
+    CreateGCRelocates(LiveVariables, BasePtrs, ExceptionalToken, Builder, GC,
+                      &Result.UnwindLiveSet);
 
     // Generate gc relocates and returns for normal block
     BasicBlock *NormalDest = II->getNormalDest();
@@ -2004,7 +2034,8 @@ makeStatepointExplicitImpl(CallBase *Call, /* to replace */
   Result.StatepointToken = Token;
 
   // Second, create a gc.relocate for every live variable
-  CreateGCRelocates(LiveVariables, BasePtrs, Token, Builder, GC);
+  CreateGCRelocates(LiveVariables, BasePtrs, Token, Builder, GC,
+                    NormalLiveSet);
 }
 
 // Replace an existing gc.statepoint with a new one and a set of gc.relocates
@@ -2289,6 +2320,49 @@ static void relocationViaAlloca(
       InitialAllocaNum--;
   assert(InitialAllocaNum == 0 && "We must not introduce any extra allocas");
 #endif
+}
+
+/// Insert holders so that each Value is obviously live through the entire
+/// lifetime of the call.
+static void
+insertUseHolderAfter(CallBase *Call,
+                     const PartiallyConstructedSafepointRecord &Record,
+                     const PointerToBaseTy &PointerToBase,
+                     SmallVectorImpl<CallInst *> &Holders) {
+  if (PointerToBase.empty())
+    // No values to hold live, might as well not insert the empty holder
+    return;
+
+  Module *M = Call->getModule();
+  // Use a dummy vararg function to actually hold the values live
+  FunctionCallee Func = M->getOrInsertFunction(
+      "__tmp_use", FunctionType::get(Type::getVoidTy(M->getContext()), true));
+
+  if (isa<CallInst>(Call)) {
+    SmallVector<Value *, 128> Bases;
+    for (auto Pair : PointerToBase)
+      Bases.push_back(Pair.second);
+    // For call safepoints insert dummy calls right after safepoint
+    Holders.push_back(
+        CallInst::Create(Func, Bases, "", &*++Call->getIterator()));
+    return;
+  }
+
+  // For invoke safepooints insert dummy calls both in normal and
+  // exceptional destination blocks, with Bases filtered.
+  auto *II = cast<InvokeInst>(Call);
+  SmallVector<Value *, 128> NormalBases, UnwindBases;
+  for (auto Pair : PointerToBase) {
+    if (Record.NormalLiveSet.count(Pair.first) != 0)
+      NormalBases.push_back(Pair.second);
+    if (Record.UnwindLiveSet.count(Pair.first) != 0)
+      UnwindBases.push_back(Pair.second);
+  }
+
+  Holders.push_back(CallInst::Create(
+      Func, NormalBases, "", &*II->getNormalDest()->getFirstInsertionPt()));
+  Holders.push_back(CallInst::Create(
+      Func, UnwindBases, "", &*II->getUnwindDest()->getFirstInsertionPt()));
 }
 
 /// Insert holders so that each Value is obviously live through the entire
@@ -2813,14 +2887,7 @@ static bool insertParsePoints(Function &F, DominatorTree &DT,
   Holders.reserve(Holders.size() + Records.size());
   for (size_t i = 0; i < Records.size(); i++) {
     PartiallyConstructedSafepointRecord &Info = Records[i];
-
-    SmallVector<Value *, 128> Bases;
-    for (auto *Derived : Info.LiveSet) {
-      assert(PointerToBase.count(Derived) && "Missed base for derived pointer");
-      Bases.push_back(PointerToBase[Derived]);
-    }
-
-    insertUseHolderAfter(ToUpdate[i], Bases, Holders);
+    insertUseHolderAfter(ToUpdate[i], Info, PointerToBase, Holders);
   }
 
   // By selecting base pointers, we've effectively inserted new uses. Thus, we
