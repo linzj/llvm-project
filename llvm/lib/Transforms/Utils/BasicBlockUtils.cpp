@@ -775,6 +775,91 @@ BasicBlock *llvm::SplitBlockPredecessors(BasicBlock *BB,
   return NewBB;
 }
 
+static void SplitTokenLandingPadPredecessors(
+    BasicBlock *OrigBB, ArrayRef<BasicBlock *> Preds, const char *Suffix1,
+    const char *Suffix2, SmallVectorImpl<BasicBlock *> &NewBBs,
+    DominatorTree *DT, LoopInfo *LI, MemorySSAUpdater *MSSAU,
+    bool PreserveLCSSA) {
+  // Split something like:
+  // exception_block_from_5:                           ; preds =
+  // %exception_block_from_5.split-lp, %exception_block_from_5558
+  //   %StaticCall14 = landingpad token
+  //           cleanup
+  //   %22 = call %TaggedStruct addrspace(1)*
+  //   @llvm.experimental.gc.exception.p1s_TaggedStructs(token %StaticCall14)
+  //   %23 = call %TaggedStruct addrspace(1)*
+  //   @llvm.experimental.gc.exception.data.p1s_TaggedStructs(token
+  //   %StaticCall14) br label %B_catch_block_0, !dbg !17240
+
+  // Create a new basic block for OrigBB's predecessors listed in Preds. Insert
+  // it right before the original block.
+  BasicBlock *Successor = OrigBB->getSingleSuccessor();
+  assert(!!Successor && "Only able to handle single successor");
+  BasicBlock *NewBB =
+      BasicBlock::Create(OrigBB->getContext(), OrigBB->getName() + Suffix1,
+                         OrigBB->getParent(), OrigBB);
+  // Clone all instructions from OrigBB.
+  for (BasicBlock::iterator I = OrigBB->begin(), End = OrigBB->end(); I != End;
+       ++I) {
+    assert(!isa<PHINode>(I));
+    Instruction *Clone = I->clone();
+    NewBB->getInstList().push_back(Clone);
+    if (isa<LandingPadInst>(I))
+      continue;
+    if (I->isTerminator())
+      continue;
+
+    // Find the phi user if exist, then append to it.
+    auto User = I->user_begin();
+    assert(User != I->user_end());
+    PHINode *PN;
+    if (isa<PHINode>(*User)) {
+      PN = cast<PHINode>(*User);
+      assert(std::next(User) == I->user_end());
+    } else {
+      PN = PHINode::Create(I->getType(), 2, "lpad.phi", &*Successor->begin());
+      I->replaceAllUsesWith(PN);
+      PN->addIncoming(&*I, OrigBB);
+    }
+    PN->addIncoming(Clone, NewBB);
+  }
+
+  LandingPadInst *LPad = NewBB->getLandingPadInst();
+  LandingPadInst *OrigLPad = OrigBB->getLandingPadInst();
+  LPad->setName(Twine("lpad") + Suffix1);
+  for (BasicBlock::iterator I = std::next(LPad->getIterator()),
+                            End = NewBB->end();
+       I != End; ++I) {
+    // replace the use to OrigLPad to LPad
+    I->replaceUsesOfWith(OrigLPad, LPad);
+  }
+  NewBBs.push_back(NewBB);
+
+  // Move the edges from Preds to point to NewBB instead of OrigBB.
+  for (unsigned i = 0, e = Preds.size(); i != e; ++i) {
+    // This is slightly more strict than necessary; the minimum requirement
+    // is that there be no more than one indirectbr branching to BB. And
+    // all BlockAddress uses would need to be updated.
+    assert(!isa<IndirectBrInst>(Preds[i]->getTerminator()) &&
+           "Cannot split an edge from an IndirectBrInst");
+    Preds[i]->getTerminator()->replaceUsesOfWith(OrigBB, NewBB);
+  }
+
+  bool HasLoopExit = false;
+  UpdateAnalysisInformation(Successor, NewBB, Preds, DT, LI, MSSAU,
+                            PreserveLCSSA, HasLoopExit);
+
+  // Adjust the phi node.
+  // If there is a value comes from OrigBB, but none from NewBB
+  // we should use the value from OrigBB and comes from NewBB.
+  for (PHINode &PN : Successor->phis()) {
+    if (PN.getBasicBlockIndex(NewBB) != -1)
+      continue;
+    Value *Val = PN.getIncomingValueForBlock(OrigBB);
+    PN.addIncoming(Val, NewBB);
+  }
+}
+
 void llvm::SplitLandingPadPredecessors(BasicBlock *OrigBB,
                                        ArrayRef<BasicBlock *> Preds,
                                        const char *Suffix1, const char *Suffix2,
@@ -783,6 +868,12 @@ void llvm::SplitLandingPadPredecessors(BasicBlock *OrigBB,
                                        MemorySSAUpdater *MSSAU,
                                        bool PreserveLCSSA) {
   assert(OrigBB->isLandingPad() && "Trying to split a non-landing pad!");
+  LandingPadInst *LPad = OrigBB->getLandingPadInst();
+  if (!LPad->use_empty() && LPad->getType()->isTokenTy()) {
+    SplitTokenLandingPadPredecessors(OrigBB, Preds, Suffix1, Suffix2, NewBBs,
+                                     DT, LI, MSSAU, PreserveLCSSA);
+    return;
+  }
 
   // Create a new basic block for OrigBB's predecessors listed in Preds. Insert
   // it right before the original block.
@@ -849,7 +940,6 @@ void llvm::SplitLandingPadPredecessors(BasicBlock *OrigBB,
     UpdatePHINodes(OrigBB, NewBB2, NewBB2Preds, BI2, HasLoopExit);
   }
 
-  LandingPadInst *LPad = OrigBB->getLandingPadInst();
   Instruction *Clone1 = LPad->clone();
   Clone1->setName(Twine("lpad") + Suffix1);
   NewBB1->getInstList().insert(NewBB1->getFirstInsertionPt(), Clone1);
