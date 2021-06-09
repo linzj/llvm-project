@@ -6083,6 +6083,8 @@ bool llvm::UpgradeDebugInfo(Module &M) {
       DiagnosticInfoIgnoringInvalidDebugMetadata Diag(M);
       M.getContext().diagnose(Diag);
     }
+  } else {
+    return false;
   }
   bool Modified = StripDebugInfo(M);
   if (Modified && Version != DEBUG_METADATA_VERSION) {
