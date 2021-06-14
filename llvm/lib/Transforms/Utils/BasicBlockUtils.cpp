@@ -791,72 +791,91 @@ static void SplitTokenLandingPadPredecessors(
   //   @llvm.experimental.gc.exception.data.p1s_TaggedStructs(token
   //   %StaticCall14) br label %B_catch_block_0, !dbg !17240
 
-  // Create a new basic block for OrigBB's predecessors listed in Preds. Insert
-  // it right before the original block.
-  BasicBlock *Successor = OrigBB->getSingleSuccessor();
-  assert(!!Successor && "Only able to handle single successor");
-  BasicBlock *NewBB =
-      BasicBlock::Create(OrigBB->getContext(), OrigBB->getName() + Suffix1,
-                         OrigBB->getParent(), OrigBB);
-  // Clone all instructions from OrigBB.
-  for (BasicBlock::iterator I = OrigBB->begin(), End = OrigBB->end(); I != End;
-       ++I) {
-    assert(!isa<PHINode>(I));
-    Instruction *Clone = I->clone();
+  // Create two new BB and merge the values using landing pad.
+  // OrigBB should not has any phis.
+  assert(OrigBB->phis().empty());
+  assert(Preds.size() == 1U);
+  BasicBlock *NewMerge = BasicBlock::Create(OrigBB->getContext(),
+                                            OrigBB->getName() + ".lpad.merge",
+                                            OrigBB->getParent(), OrigBB);
+  DebugLoc DL = OrigBB->getFirstNonPHI()->getDebugLoc();
+  // Now move all preds from OrigBB to NewMerge then UpdateAnalysisInformation.
+  SmallVector<BasicBlock *, 8> AllPreds;
+  for (pred_iterator i = pred_begin(OrigBB), e = pred_end(OrigBB); i != e;) {
+    BasicBlock *Pred = *i++;
+    Pred->getTerminator()->replaceUsesOfWith(OrigBB, NewMerge);
+    AllPreds.push_back(Pred);
+    e = pred_end(OrigBB);
+  }
+  BranchInst::Create(OrigBB, NewMerge)->setDebugLoc(DL);
+  bool HasLoopExit = false;
+  UpdateAnalysisInformation(OrigBB, NewMerge, AllPreds, DT, LI, MSSAU,
+                            PreserveLCSSA, HasLoopExit);
+
+  // Swap the target pred to the first pos
+  // Assuming the size of Preds is 1.
+  {
+    auto It = std::find(AllPreds.begin(), AllPreds.end(), Preds[0]);
+    assert(It != AllPreds.end());
+    std::swap(*AllPreds.begin(), *It);
+  }
+
+  LandingPadInst *LPad = OrigBB->getLandingPadInst();
+  // Create all the NewBBs.
+  for (size_t i = 0; i < AllPreds.size(); ++i) {
+    std::string Name = OrigBB->getName();
+    if (i == 0)
+      Name += Suffix1;
+    else
+      Name += Suffix2;
+    BasicBlock *NewBB = BasicBlock::Create(OrigBB->getContext(), Name,
+                                           OrigBB->getParent(), OrigBB);
+    NewBBs.push_back(NewBB);
+    // Build Instructions for NewBBs and NewMerge.
+    Instruction *Clone = LPad->clone();
+    std::string PadName("lpad");
+    if (i == 0)
+      PadName = PadName + Suffix1;
+    else
+      PadName = PadName + Suffix2;
+    Clone->setName(PadName);
     NewBB->getInstList().push_back(Clone);
-    if (isa<LandingPadInst>(I))
-      continue;
-    if (I->isTerminator())
-      continue;
+  }
 
-    // Find the phi user if exist, then append to it.
-    auto User = I->user_begin();
-    assert(User != I->user_end());
-    PHINode *PN;
-    if (isa<PHINode>(*User)) {
-      PN = cast<PHINode>(*User);
-      assert(std::next(User) == I->user_end());
-    } else {
-      PN = PHINode::Create(I->getType(), 2, "lpad.phi", &*Successor->begin());
-      I->replaceAllUsesWith(PN);
-      PN->addIncoming(&*I, OrigBB);
+  // Create Instr for all new bbs.
+  for (auto U = LPad->user_begin(), End = LPad->user_end(); U != End;) {
+    Instruction *I = cast<Instruction>(*U++);
+    PHINode *PN =
+        PHINode::Create(I->getType(), NewBBs.size(),
+                        Twine("lpad.phi") + Suffix1, &*NewMerge->begin());
+    for (BasicBlock *NewBB : NewBBs) {
+      LandingPadInst *NewLPad = NewBB->getLandingPadInst();
+      Instruction *UserClone = I->clone();
+      UserClone->replaceUsesOfWith(LPad, NewLPad);
+      NewBB->getInstList().push_back(UserClone);
+      PN->addIncoming(UserClone, NewBB);
     }
-    PN->addIncoming(Clone, NewBB);
+    I->replaceAllUsesWith(PN);
+    I->eraseFromParent();
   }
+  LPad->eraseFromParent();
 
-  LandingPadInst *LPad = NewBB->getLandingPadInst();
-  LandingPadInst *OrigLPad = OrigBB->getLandingPadInst();
-  LPad->setName(Twine("lpad") + Suffix1);
-  for (BasicBlock::iterator I = std::next(LPad->getIterator()),
-                            End = NewBB->end();
-       I != End; ++I) {
-    // replace the use to OrigLPad to LPad
-    I->replaceUsesOfWith(OrigLPad, LPad);
-  }
-  NewBBs.push_back(NewBB);
-
-  // Move the edges from Preds to point to NewBB instead of OrigBB.
-  for (unsigned i = 0, e = Preds.size(); i != e; ++i) {
+  // All Preds branches to its NewBB accordingly.
+  for (size_t i = 0, e = AllPreds.size(); i != e; ++i) {
     // This is slightly more strict than necessary; the minimum requirement
     // is that there be no more than one indirectbr branching to BB. And
     // all BlockAddress uses would need to be updated.
     assert(!isa<IndirectBrInst>(Preds[i]->getTerminator()) &&
            "Cannot split an edge from an IndirectBrInst");
-    Preds[i]->getTerminator()->replaceUsesOfWith(OrigBB, NewBB);
-  }
-
-  bool HasLoopExit = false;
-  UpdateAnalysisInformation(Successor, NewBB, Preds, DT, LI, MSSAU,
-                            PreserveLCSSA, HasLoopExit);
-
-  // Adjust the phi node.
-  // If there is a value comes from OrigBB, but none from NewBB
-  // we should use the value from OrigBB and comes from NewBB.
-  for (PHINode &PN : Successor->phis()) {
-    if (PN.getBasicBlockIndex(NewBB) != -1)
-      continue;
-    Value *Val = PN.getIncomingValueForBlock(OrigBB);
-    PN.addIncoming(Val, NewBB);
+    AllPreds[i]->getTerminator()->replaceUsesOfWith(NewMerge, NewBBs[i]);
+    BasicBlock *NewBB = NewBBs[i];
+    // NewBB can branch to NewMerge now.
+    BranchInst::Create(NewMerge, NewBB)->setDebugLoc(DL);
+    // Update Info.
+    HasLoopExit = false;
+    SmallVector<BasicBlock *, 1> Preds{AllPreds[i]};
+    UpdateAnalysisInformation(NewMerge, NewBB, Preds, DT, LI, MSSAU,
+                              PreserveLCSSA, HasLoopExit);
   }
 }
 
