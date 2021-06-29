@@ -4098,6 +4098,11 @@ LLVMBool LLVMIsMultithreaded(void);
  * @}
  */
 
+/** LTO Split */
+void LLVMSplitModule(LLVMModuleRef Module, unsigned N,
+                     void (*CallBack)(LLVMContextRef, LLVMModuleRef, void *),
+                     void *data, bool PreserveLocals);
+
 LLVM_C_EXTERN_C_END
 
 #endif /* LLVM_C_CORE_H */
