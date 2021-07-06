@@ -140,7 +140,7 @@ static void findPartitions(Module *M, ClusterIDMapType &ClusterIDMap,
       }
     }
 
-    if (GV.hasLocalLinkage() || isa<Function>(GV))
+    if (GV.hasLocalLinkage())
       addAllGlobalValueUsers(GVtoClusterMap, &GV, &GV);
   };
 
