@@ -865,7 +865,7 @@ static void SplitTokenLandingPadPredecessors(
     // This is slightly more strict than necessary; the minimum requirement
     // is that there be no more than one indirectbr branching to BB. And
     // all BlockAddress uses would need to be updated.
-    assert(!isa<IndirectBrInst>(Preds[i]->getTerminator()) &&
+    assert(!isa<IndirectBrInst>(AllPreds[i]->getTerminator()) &&
            "Cannot split an edge from an IndirectBrInst");
     AllPreds[i]->getTerminator()->replaceUsesOfWith(NewMerge, NewBBs[i]);
     BasicBlock *NewBB = NewBBs[i];
