@@ -2514,6 +2514,7 @@ static void stripInvalidMetadataFromInstruction(Instruction &I) {
                          LLVMContext::MD_range,
                          LLVMContext::MD_alias_scope,
                          LLVMContext::MD_nontemporal,
+                         LLVMContext::MD_even_num,
                          LLVMContext::MD_nonnull,
                          LLVMContext::MD_align,
                          LLVMContext::MD_invariant_load,
