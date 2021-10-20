@@ -9743,6 +9743,198 @@ static void tryToElideArgumentCopy(
   }
 }
 
+using ArgCopyToArrayElisionMapTy =
+    DenseMap<const Argument *,
+             std::tuple<const AllocaInst *, const StoreInst *, unsigned>>;
+
+/// Scan the entry block of the function in FuncInfo for arguments that look
+/// like copies into a local alloca array. Record this copied arguments in
+/// ArgCopyToArrayElisionCandidates.
+static void findArgumentCopyToArrayElisionCandidates(
+    const DataLayout &DL, FunctionLoweringInfo *FuncInfo,
+    ArgCopyToArrayElisionMapTy &ArgCopyToArrayElisionCandidates) {
+  auto FindPointerInfo = [&](const Value *Pointer) {
+    const AllocaInst *AI = dyn_cast<AllocaInst>(Pointer);
+    if (AI)
+      return std::make_tuple(AI, static_cast<unsigned>(0));
+    const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Pointer);
+    if (!GEP)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+    AI = dyn_cast<AllocaInst>(GEP->getPointerOperand());
+    if (!AI)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+    auto IdxIter = GEP->idx_begin();
+    auto IdxEnd = GEP->idx_end();
+    if (IdxIter == IdxEnd)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+
+    const ConstantInt *Index0 = dyn_cast<ConstantInt>(*IdxIter);
+    if (!Index0)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+    ++IdxIter;
+    if (IdxIter == IdxEnd)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+
+    const ConstantInt *Index1 = dyn_cast<ConstantInt>(*IdxIter);
+    if (!Index1)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+    // Must end, assert that.
+    ++IdxIter;
+    if (IdxIter != IdxEnd)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+
+    int64_t Index0ZExt = Index0->getZExtValue();
+    if (Index0ZExt != 0)
+      return std::make_tuple(static_cast<const AllocaInst *>(nullptr),
+                             static_cast<unsigned>(0));
+    int64_t Index1ZExt = Index1->getZExtValue();
+    return std::make_tuple(AI, static_cast<unsigned>(Index1ZExt));
+  };
+
+  auto TryMatch = [&](BasicBlock::const_iterator It,
+                      BasicBlock::const_iterator End, const StoreInst *SI,
+                      const Argument *Arg, const AllocaInst *BaseAI,
+                      unsigned NextArgNo) {
+    ArgCopyToArrayElisionCandidates.try_emplace(
+        Arg, std::make_tuple(BaseAI, SI, static_cast<unsigned>(0)));
+    unsigned NextGEPIndex = 1;
+
+    if (It == End)
+      return true;
+
+    while (true) {
+      ++It;
+      if (It == End)
+        break;
+      const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(&(*It));
+      if (!GEP)
+        break;
+      ++It;
+      if (It == End)
+        break;
+      SI = dyn_cast<StoreInst>(&(*It));
+      if (!SI)
+        break;
+      // Unknown match.
+      if (SI->getPointerOperand() != GEP)
+        return false;
+      const Value *Val = SI->getValueOperand()->stripPointerCasts();
+      Arg = dyn_cast<Argument>(Val);
+      if (!Arg || Arg->hasInAllocaAttr() || Arg->hasByValAttr() ||
+          Arg->getType()->isEmptyTy())
+        return false;
+      if (Arg->getArgNo() != NextArgNo)
+        return false;
+      const AllocaInst *AI;
+      unsigned GEPIndex;
+
+      std::tie(AI, GEPIndex) = FindPointerInfo(GEP->stripPointerCasts());
+      if (AI != BaseAI)
+        return false;
+      if (GEPIndex != NextGEPIndex)
+        return false;
+
+      ArgCopyToArrayElisionCandidates.try_emplace(
+          Arg, std::make_tuple(BaseAI, SI, GEPIndex));
+      NextArgNo++;
+      NextGEPIndex++;
+    }
+    return true;
+  };
+
+  const auto &EntryBlock = FuncInfo->Fn->getEntryBlock();
+  auto It = EntryBlock.begin(), End = EntryBlock.end();
+
+  for (; It != End; ++It) {
+    const Instruction &I = *It;
+    // Look for stores, and handle non-store uses conservatively.
+    const auto *SI = dyn_cast<StoreInst>(&I);
+    if (!SI)
+      continue;
+    const Value *Val = SI->getValueOperand()->stripPointerCasts();
+    const auto *Arg = dyn_cast<Argument>(Val);
+    if (!Arg || Arg->hasInAllocaAttr() || Arg->hasByValAttr() ||
+        Arg->getType()->isEmptyTy())
+      continue;
+    unsigned BaseArgumentNo = Arg->getArgNo();
+    const AllocaInst *AI;
+    unsigned GEPIndex;
+
+    std::tie(AI, GEPIndex) =
+        FindPointerInfo(SI->getPointerOperand()->stripPointerCasts());
+    if (!AI)
+      continue;
+    // No need to process.
+    if (GEPIndex != 0)
+      return;
+
+    if (TryMatch(It, End, SI, Arg, AI, BaseArgumentNo + 1))
+      return;
+
+    ArgCopyToArrayElisionCandidates.clear();
+  }
+}
+
+/// Try to elide argument copies from memory into a local alloca. Succeeds if
+/// ArgVal is a load from a suitable fixed stack object.
+static void tryToElideArgumentCopyToArray(
+    FunctionLoweringInfo &FuncInfo, SmallVectorImpl<SDValue> &Chains,
+    DenseMap<int, int> &ArgCopyElisionFrameIndexMap,
+    SmallPtrSetImpl<const Instruction *> &ElidedArgCopyInstrs,
+    ArgCopyToArrayElisionMapTy &ArgCopyToArrayElisionCandidates,
+    const Argument &Arg, SDValue ArgVal, bool &ArgHasUses) {
+  // Check if this is a load from a fixed stack object.
+  auto *LNode = dyn_cast<LoadSDNode>(ArgVal);
+  if (!LNode)
+    return;
+  auto *FINode = dyn_cast<FrameIndexSDNode>(LNode->getBasePtr().getNode());
+  if (!FINode)
+    return;
+  auto ArgCopyIter = ArgCopyToArrayElisionCandidates.find(&Arg);
+  assert(ArgCopyIter != ArgCopyToArrayElisionCandidates.end());
+  const AllocaInst *AI;
+  const StoreInst *SI;
+  unsigned GEPIndex;
+  std::tie(AI, SI, GEPIndex) = ArgCopyIter->second;
+
+  // Base not in the fix stack, exit.
+  if (GEPIndex != 0 && ElidedArgCopyInstrs.empty())
+    return;
+
+  int FixedIndex = FINode->getIndex();
+  int &AllocaIndex = FuncInfo.StaticAllocaMap[AI];
+  int OldIndex = AllocaIndex;
+  MachineFrameInfo &MFI = FuncInfo.MF->getFrameInfo();
+
+  if (GEPIndex == 0) {
+    MFI.RemoveStackObject(OldIndex);
+    AllocaIndex = FixedIndex;
+    ArgCopyElisionFrameIndexMap.insert({OldIndex, FixedIndex});
+  }
+
+  MFI.setIsImmutableObjectIndex(FixedIndex, false);
+  Chains.push_back(ArgVal.getValue(1));
+
+  // Avoid emitting code for the store implementing the copy.
+  ElidedArgCopyInstrs.insert(SI);
+
+  // Check for uses of the argument again so that we can avoid exporting ArgVal
+  // if it is't used by anything other than the store.
+  for (const Value *U : Arg.users()) {
+    if (U != SI) {
+      ArgHasUses = true;
+      break;
+    }
+  }
+}
+
 void SelectionDAGISel::LowerArguments(const Function &F) {
   SelectionDAG &DAG = SDB->DAG;
   SDLoc dl = SDB->getCurSDLoc();
@@ -9773,6 +9965,11 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
   ArgCopyElisionMapTy ArgCopyElisionCandidates;
   findArgumentCopyElisionCandidates(DL, FuncInfo.get(),
                                     ArgCopyElisionCandidates);
+
+  ArgCopyToArrayElisionMapTy ArgCopyToArrayElisionCandidates;
+  if (ArgCopyElisionCandidates.empty())
+    findArgumentCopyToArrayElisionCandidates(DL, FuncInfo.get(),
+                                             ArgCopyToArrayElisionCandidates);
 
   // Set up the incoming argument description vector.
   for (const Argument &Arg : F.args()) {
@@ -9865,6 +10062,8 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
       Flags.setOrigAlign(OriginalAlignment);
       if (ArgCopyElisionCandidates.count(&Arg))
         Flags.setCopyElisionCandidate();
+      if (ArgCopyToArrayElisionCandidates.count(&Arg))
+        Flags.setCopyToArrayElisionCandidate();
       if (Arg.hasAttribute(Attribute::Returned))
         Flags.setReturned();
 
@@ -9963,6 +10162,10 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
       tryToElideArgumentCopy(*FuncInfo, Chains, ArgCopyElisionFrameIndexMap,
                              ElidedArgCopyInstrs, ArgCopyElisionCandidates, Arg,
                              InVals[i], ArgHasUses);
+    } else if (Ins[i].Flags.isCopyToArrayElisionCandidate()) {
+      tryToElideArgumentCopyToArray(
+          *FuncInfo, Chains, ArgCopyElisionFrameIndexMap, ElidedArgCopyInstrs,
+          ArgCopyToArrayElisionCandidates, Arg, InVals[i], ArgHasUses);
     }
 
     // If this argument is unused then remember its value. It is used to generate
