@@ -53,6 +53,8 @@ namespace ISD {
     unsigned IsInConsecutiveRegsLast : 1;
     unsigned IsInConsecutiveRegs : 1;
     unsigned IsCopyElisionCandidate : 1; ///< Argument copy elision candidate
+    unsigned
+        IsCopyToArrayElisionCandidate : 1; ///< Argument copy elision candidate
     unsigned IsPointer : 1;
     /// Whether this is part of a variable argument list (non-fixed).
     unsigned IsVarArg : 1;
@@ -69,7 +71,8 @@ namespace ISD {
           IsSwiftError(0), IsCFGuardTarget(0), IsHva(0), IsHvaStart(0),
           IsSecArgPass(0), MemAlign(0), OrigAlign(0),
           IsInConsecutiveRegsLast(0), IsInConsecutiveRegs(0),
-          IsCopyElisionCandidate(0), IsPointer(0), IsVarArg(0) {
+          IsCopyElisionCandidate(0), IsCopyToArrayElisionCandidate(0),
+          IsPointer(0), IsVarArg(0) {
       static_assert(sizeof(*this) == 4 * sizeof(unsigned), "flags are too big");
     }
 
@@ -143,6 +146,11 @@ namespace ISD {
 
     bool isCopyElisionCandidate()  const { return IsCopyElisionCandidate; }
     void setCopyElisionCandidate() { IsCopyElisionCandidate = 1; }
+
+    bool isCopyToArrayElisionCandidate() const {
+      return IsCopyToArrayElisionCandidate;
+    }
+    void setCopyToArrayElisionCandidate() { IsCopyToArrayElisionCandidate = 1; }
 
     bool isPointer()  const { return IsPointer; }
     void setPointer() { IsPointer = 1; }

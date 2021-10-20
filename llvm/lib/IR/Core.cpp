@@ -4775,7 +4775,7 @@ void LLVMSplitModule(LLVMModuleRef M, unsigned N,
                                       void *),
                      void *data, bool PreserveLocals) {
   SplitModule(
-      std::unique_ptr<Module>(unwrap(M)), N,
+      *unwrap(M), N,
       [CallBack, data](std::unique_ptr<Module> MPart) {
         SmallString<0> BC;
         raw_svector_ostream BCOS(BC);
