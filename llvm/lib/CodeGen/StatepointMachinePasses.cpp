@@ -79,6 +79,9 @@ public:
 private:
   bool rewriteStatepoints(MachineFunction &);
   bool rewriteStatepoint(MachineFunction &, MachineInstr *MI);
+  const SmallVector<Register, 4> &collectSplitRegs(Register);
+
+  DenseMap<Register, SmallVector<Register, 4>> SplitRegMap;
   SlotIndexes *Indexes;
   LiveIntervals *LIS;
   LiveStacks *LSS;
@@ -116,7 +119,6 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   TII = STI.getInstrInfo();
   SmallPtrSet<MachineInstr *, 8> RemoveSet;
-  SmallVector<MachineInstr *, 8> PHIs, PHIs2;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
@@ -145,8 +147,6 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
         Register Dst = MI.getOperand(0).getReg();
         MRI->replaceRegWith(Dst, Src);
         RemoveSet.insert(&MI);
-      } else if (MI.isPHI()) {
-        PHIs.emplace_back(&MI);
       }
     }
   }
@@ -206,6 +206,8 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
     MIB.add(StatePoint->getOperand(i));
 
   auto &IDMap = MRI->getStatePointIDMap();
+  auto &RegInfoVector = IDMap[ID];
+
   for (unsigned i = StartIdx; i < StatePoint->getNumOperands(); ++i) {
     MachineOperand &MO = StatePoint->getOperand(i);
     if (!MO.isReg() || Register::isPhysicalRegister(MO.getReg())) {
@@ -221,9 +223,10 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
         TII->getStackSlotRange(RC, MO.getSubReg(), SpillSize, SpillOffset, MF);
     if (!Valid)
       report_fatal_error("cannot spill statepoint subregister operand");
-    IDMap[ID].emplace_back(
+    RegInfoVector.emplace_back(
         MachineRegisterInfo::StatePointRegInfo{Reg, SpillSize, SpillOffset});
   }
+
   MachineBasicBlock *MBB = StatePoint->getParent();
   MachineBasicBlock::iterator Pos = StatePoint;
   MBB->insert(Pos, NewMI);
@@ -264,6 +267,7 @@ bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
   LIS = &getAnalysis<LiveIntervals>();
   LSS = &getAnalysis<LiveStacks>();
   VRM = &getAnalysis<VirtRegMap>();
+  SplitRegMap.clear();
   return rewriteStatepoints(MF);
 }
 
@@ -318,6 +322,8 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
   // Check Any Stack Slot overlaps this StatePoint.
   SlotIndex Index = Indexes->getInstructionIndex(*StatePoint);
   const auto &RegInfoVector = Found->second;
+  DenseSet<unsigned> SeenRegs;
+
   auto AddStackSlot =
       [&](const MachineRegisterInfo::StatePointRegInfo &RegInfo) {
         int StackSlot = VRM->getStackSlot(RegInfo.Reg);
@@ -353,12 +359,14 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
       MIB.addReg(RegInfo.Reg);
       continue;
     }
+    if (SeenRegs.insert(RegInfo.Reg).second == false)
+      continue;
     assert(VRM->getOriginal(RegInfo.Reg) == RegInfo.Reg);
     AddStackSlot(RegInfo);
     // Add live phys registers to MIB if targeted.
     if (AddPhysIfLiveOut(RegInfo.Reg))
       continue;
-    const auto &split = VRM->collectSplitRegs(RegInfo.Reg);
+    const auto &split = collectSplitRegs(RegInfo.Reg);
     for (auto Reg : split) {
       if (AddPhysIfLiveOut(Reg))
         break;
@@ -370,6 +378,17 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
   LIS->ReplaceMachineInstrInMaps(*StatePoint, *NewMI);
   MBB->erase(StatePoint);
   return true;
+}
+
+const SmallVector<Register, 4> &
+StatepointRewrite::collectSplitRegs(Register Origin) {
+  auto Found = SplitRegMap.find(Origin);
+  if (Found != SplitRegMap.end())
+    return Found->second;
+  // Cache the result.
+  auto p = SplitRegMap.try_emplace(Origin, VRM->collectSplitRegs(Origin));
+  assert(p.second);
+  return p.first->second;
 }
 
 FunctionPass *llvm::createStatepointSimplifyPass() {
