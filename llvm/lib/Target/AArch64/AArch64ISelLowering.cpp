@@ -4317,7 +4317,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     TRI->UpdateCustomCallPreservedMask(MF, &Mask);
 
   if (!CLI.CustomRegMask.empty()) {
-    Mask = TRI->UpdateRegMask(MF, Mask, CLI.CustomRegMask);
+    Mask = TRI->UpdateRegMask(MF, CLI.CustomRegMask);
   }
 
   if (TRI->isAnyArgRegReserved(MF))
