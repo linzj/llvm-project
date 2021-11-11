@@ -12,10 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm-c/Transforms/Scalar.h"
 #include "llvm/InitializePasses.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Transforms/Scalar.h"
 
 using namespace llvm;
 
@@ -53,8 +50,4 @@ void llvm::initializeScalarOpts(PassRegistry &Registry) {
   initializeStraightLineStrengthReduceLegacyPassPass(Registry);
   initializePlaceBackedgeSafepointsLegacyPassPass(Registry);
   initializePostInlineEntryExitInstrumenterPass(Registry);
-}
-
-void LLVMAddRewriteStatepointsForGCLegacyPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createRewriteStatepointsForGCLegacyPass());
 }

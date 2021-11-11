@@ -13,8 +13,6 @@
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Types.h"
-#include "llvm/Bitcode/BitcodeReader.h"
-#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/ConstantRange.h"
@@ -4771,23 +4769,12 @@ void LLVMStopMultithreaded() {}
 LLVMBool LLVMIsMultithreaded() { return llvm_is_multithreaded(); }
 
 void LLVMSplitModule(LLVMModuleRef M, unsigned N,
-                     void (*CallBack)(LLVMContextRef Ctx, LLVMModuleRef,
-                                      void *),
-                     void *data, bool PreserveLocals) {
+                     void (*CallBack)(LLVMModuleRef, void *), void *data,
+                     bool PreserveLocals) {
   SplitModule(
       *unwrap(M), N,
       [CallBack, data](std::unique_ptr<Module> MPart) {
-        SmallString<0> BC;
-        raw_svector_ostream BCOS(BC);
-        WriteBitcodeToFile(*MPart, BCOS);
-        LLVMContextRef Ctx = LLVMContextCreate();
-
-        Expected<std::unique_ptr<Module>> MOrErr = parseBitcodeFile(
-            MemoryBufferRef(StringRef(BC.data(), BC.size()), "<split-module>"),
-            *unwrap(Ctx));
-        if (!MOrErr)
-          report_fatal_error("Failed to read bitcode");
-        CallBack(Ctx, wrap(MOrErr.get().release()), data);
+        CallBack(wrap(MPart.release()), data);
       },
       PreserveLocals);
 }

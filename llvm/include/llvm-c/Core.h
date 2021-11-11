@@ -5371,8 +5371,8 @@ LLVM_C_ABI LLVMBool LLVMIsMultithreaded(void);
 
 /** LTO Split */
 void LLVMSplitModule(LLVMModuleRef Module, unsigned N,
-                     void (*CallBack)(LLVMContextRef, LLVMModuleRef, void *),
-                     void *data, bool PreserveLocals);
+                     void (*CallBack)(LLVMModuleRef, void *), void *data,
+                     bool PreserveLocals);
 
 LLVM_C_EXTERN_C_END
 
