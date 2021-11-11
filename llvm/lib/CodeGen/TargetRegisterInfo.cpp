@@ -677,7 +677,6 @@ TargetRegisterInfo::prependOffsetExpression(const DIExpression *Expr,
 }
 
 const uint32_t *TargetRegisterInfo::UpdateRegMask(MachineFunction &MF,
-                                                  const uint32_t *Mask,
                                                   StringRef Regs) const {
   // First init the Names2Regs.
   // Comes from MIRParser.
@@ -702,8 +701,6 @@ const uint32_t *TargetRegisterInfo::UpdateRegMask(MachineFunction &MF,
   }
   // Allocate new reg mask.
   uint32_t *UpdatedMask = MF.allocateRegMask();
-  unsigned RegMaskSize = MachineOperand::getRegMaskSize(getNumRegs());
-  memcpy(UpdatedMask, Mask, sizeof(UpdatedMask[0]) * RegMaskSize);
   // Update to new regmask.
   for (unsigned I = 0, E = getNumRegs(); I < E; ++I) {
     if (!RegNoSet.count(I))

@@ -1113,10 +1113,9 @@ public:
   // info, because it's a known there is no mapping available.
   virtual bool isIgnoredCVReg(MCRegister LLVMReg) const { return false; }
 
-  /// Returns a copy of Mask (allocated on MF's allocator) with the bits of
-  /// the comma-separated register list Regs set as preserved.
-  const uint32_t *UpdateRegMask(MachineFunction &MF, const uint32_t *Mask,
-                                StringRef Regs) const;
+  /// Returns a copy of the call preserved mask with the bits of the
+  /// comma-separated register list Regs cleared.
+  const uint32_t *UpdateRegMask(MachineFunction &MF, StringRef Regs) const;
 };
 
 //===----------------------------------------------------------------------===//

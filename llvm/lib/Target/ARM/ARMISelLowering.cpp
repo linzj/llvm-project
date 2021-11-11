@@ -2711,7 +2711,7 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   }
 
   if (!CLI.CustomRegMask.empty())
-    Mask = ARI->UpdateRegMask(MF, Mask, CLI.CustomRegMask);
+    Mask = ARI->UpdateRegMask(MF, CLI.CustomRegMask);
 
   assert(Mask && "Missing call preserved mask for calling convention");
   Ops.push_back(DAG.getRegisterMask(Mask));
