@@ -119,28 +119,35 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   TII = STI.getInstrInfo();
   SmallPtrSet<MachineInstr *, 8> RemoveSet;
+
+  auto IsValidCopyMI = [&](const MachineInstr &MI) {
+    if (MI.getOpcode() == TargetOpcode::RELOCATE_DEF)
+      return true;
+    if (!MI.isFullCopy())
+      return false;
+    Register SrcReg = MI.getOperand(1).getReg();
+    if (!Register::isVirtualRegister(SrcReg))
+      return false;
+    Register DstReg = MI.getOperand(0).getReg();
+    if (!Register::isVirtualRegister(DstReg))
+      return false;
+    // ARM use copy to cast from FP to SI. Check it.
+    if (MRI->getRegClass(DstReg) != MRI->getRegClass(SrcReg))
+      return false;
+    return true;
+  };
+
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
-      if (MI.getOpcode() == TargetOpcode::RELOCATE_DEF) {
+      if (IsValidCopyMI(MI)) {
         // find the real source.
         Register Src = MI.getOperand(1).getReg();
         MachineInstr *DefOfSrc = getSingleDef(*MRI, Src);
         while (DefOfSrc) {
-          unsigned MaybeSrc = 0;
-          switch (DefOfSrc->getOpcode()) {
-          case TargetOpcode::RELOCATE_DEF:
-          case TargetOpcode::COPY:
-            MaybeSrc = DefOfSrc->getOperand(1).getReg();
+          if (!IsValidCopyMI(*DefOfSrc))
             break;
-          default:
-            break;
-          }
-          if (!MaybeSrc)
-            break;
-          if (!Register::isVirtualRegister(MaybeSrc))
-            break;
-          Src = MaybeSrc;
+          Src = DefOfSrc->getOperand(1).getReg();
           DefOfSrc = getSingleDef(*MRI, Src);
         }
         // Replace Dst with Src.
