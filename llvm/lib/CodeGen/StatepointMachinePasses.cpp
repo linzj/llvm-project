@@ -56,6 +56,26 @@ public:
 
 private:
   bool foldRelocateDef(MachineFunction &F);
+
+  MachineRegisterInfo *MRI;
+  const TargetInstrInfo *TII;
+};
+
+class StatepointRemoveOperands : public MachineFunctionPass {
+public:
+  StatepointRemoveOperands();
+  StringRef getPassName() const override { return "Statepoint Remove Operand"; }
+
+  bool runOnMachineFunction(MachineFunction &MF) override;
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<LiveIntervals>();
+    MachineFunctionPass::getAnalysisUsage(AU);
+  }
+
+  static char ID;
+
+private:
   /// Remove the redundant move immediate from statepoints.
   bool removeVarFromStatepoints(MachineFunction &MF);
 
@@ -63,6 +83,7 @@ private:
 
   MachineRegisterInfo *MRI;
   const TargetInstrInfo *TII;
+  LiveIntervals *LIS;
 };
 
 class StatepointRewrite : public MachineFunctionPass {
@@ -110,7 +131,6 @@ StatepointSimplify::StatepointSimplify()
 
 bool StatepointSimplify::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = foldRelocateDef(MF);
-  Changed |= removeVarFromStatepoints(MF);
   return Changed;
 }
 
@@ -166,7 +186,33 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   return !RemoveSet.empty();
 }
 
-bool StatepointSimplify::removeVarFromStatepoints(MachineFunction &MF) {
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "statepoint-remove-operands"
+
+INITIALIZE_PASS_BEGIN(StatepointRemoveOperands, DEBUG_TYPE,
+                      "Statepoint Remove Operand", false, false)
+INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
+INITIALIZE_PASS_END(StatepointRemoveOperands, DEBUG_TYPE,
+                    "Statepoint Remove Operand", false, false)
+
+char StatepointRemoveOperands::ID = 0;
+
+StatepointRemoveOperands::StatepointRemoveOperands()
+    : MachineFunctionPass(ID), MRI(nullptr), TII(nullptr) {
+  PassRegistry &Registry = *PassRegistry::getPassRegistry();
+  initializeStatepointRemoveOperandsPass(Registry);
+}
+
+bool StatepointRemoveOperands::runOnMachineFunction(MachineFunction &MF) {
+  LIS = &getAnalysis<LiveIntervals>();
+  MRI = &MF.getRegInfo();
+  const TargetSubtargetInfo &STI = MF.getSubtarget();
+  TII = STI.getInstrInfo();
+  bool Changed = removeVarFromStatepoints(MF);
+  return Changed;
+}
+
+bool StatepointRemoveOperands::removeVarFromStatepoints(MachineFunction &MF) {
   bool Changed = false;
   SmallVector<MachineInstr *, 8> WorkList;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
@@ -184,8 +230,8 @@ bool StatepointSimplify::removeVarFromStatepoints(MachineFunction &MF) {
   return Changed;
 }
 
-bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
-                                                 MachineInstr *StatePoint) {
+bool StatepointRemoveOperands::removeVarFromStatepoint(
+    MachineFunction &MF, MachineInstr *StatePoint) {
   unsigned StartIdx = 0;
   uint64_t ID = 0;
   switch (StatePoint->getOpcode()) {
@@ -204,21 +250,12 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
   if (StartIdx == StatePoint->getNumOperands())
     return false;
 
-  MachineInstr *NewMI = MF.CreateMachineInstr(TII->get(StatePoint->getOpcode()),
-                                              StatePoint->getDebugLoc(), true);
-  MachineInstrBuilder MIB(MF, NewMI);
-
-  // No need to fold return, the meta data, and function arguments
-  for (unsigned i = 0; i < StartIdx; ++i)
-    MIB.add(StatePoint->getOperand(i));
-
   auto &IDMap = MRI->getStatePointIDMap();
   auto &RegInfoVector = IDMap[ID];
 
-  for (unsigned i = StartIdx; i < StatePoint->getNumOperands(); ++i) {
+  for (unsigned i = StatePoint->getNumOperands() - 1; i >= StartIdx; --i) {
     MachineOperand &MO = StatePoint->getOperand(i);
     if (!MO.isReg() || Register::isPhysicalRegister(MO.getReg())) {
-      MIB.add(MO);
       continue;
     }
     Register Reg = MO.getReg();
@@ -232,12 +269,10 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
       report_fatal_error("cannot spill statepoint subregister operand");
     RegInfoVector.emplace_back(
         MachineRegisterInfo::StatePointRegInfo{Reg, SpillSize, SpillOffset});
+    StatePoint->RemoveOperand(i);
+    LIS->shrinkToUses(&LIS->getInterval(Reg));
   }
 
-  MachineBasicBlock *MBB = StatePoint->getParent();
-  MachineBasicBlock::iterator Pos = StatePoint;
-  MBB->insert(Pos, NewMI);
-  MBB->erase(StatePoint);
   return !IDMap.empty();
 }
 
@@ -400,6 +435,10 @@ StatepointRewrite::collectSplitRegs(Register Origin) {
 
 FunctionPass *llvm::createStatepointSimplifyPass() {
   return new StatepointSimplify();
+}
+
+FunctionPass *llvm::createStatepointRemoveOperandsPass() {
+  return new StatepointRemoveOperands();
 }
 
 FunctionPass *llvm::createStatepointRewritePass() {
