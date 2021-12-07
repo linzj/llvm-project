@@ -320,7 +320,6 @@ LLVM_ABI void initializeStackProtectorPass(PassRegistry &);
 LLVM_ABI void initializeStackSafetyGlobalInfoWrapperPassPass(PassRegistry &);
 LLVM_ABI void initializeStackSafetyInfoWrapperPassPass(PassRegistry &);
 LLVM_ABI void initializeStackSlotColoringLegacyPass(PassRegistry &);
-LLVM_ABI void initializeStatepointRemoveOperandsPass(PassRegistry &);
 LLVM_ABI void initializeStatepointRewritePass(PassRegistry &);
 LLVM_ABI void initializeStatepointSimplifyPass(PassRegistry &);
 LLVM_ABI void

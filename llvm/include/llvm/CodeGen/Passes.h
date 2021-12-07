@@ -575,7 +575,6 @@ LLVM_ABI FunctionPass *createBreakFalseDepsLegacyPass();
 LLVM_ABI FunctionPass *createIndirectBrExpandPass();
 
 /// Remove the operands from state points.
-LLVM_ABI FunctionPass *createStatepointRemoveOperandsPass();
 
 /// Creates CFI Fixup pass. \see CFIFixup.cpp
 LLVM_ABI FunctionPass *createCFIFixupLegacy();
