@@ -16,6 +16,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/IndexedMap.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
@@ -153,10 +154,7 @@ private:
   /// second element.
   std::vector<std::pair<unsigned, unsigned>> LiveIns;
 
-  /// Record the original Reg and its spill info for a patch point.
-  using StatePointIDMapType =
-      DenseMap<uint64_t, SmallVector<StatePointRegInfo, 8>>;
-  StatePointIDMapType StatePointIDMap;
+  DenseSet<Register> StatepointObserved;
 
 public:
   explicit MachineRegisterInfo(MachineFunction *MF);
@@ -1179,7 +1177,16 @@ public:
     MachineInstr *operator->() const { return &operator*(); }
   };
 
-  StatePointIDMapType &getStatePointIDMap() { return StatePointIDMap; }
+  void addStatepointObserved(Register r) { StatepointObserved.insert(r); }
+
+  bool isStatepointObserved(Register r) {
+    return StatepointObserved.count(r) != 0;
+  }
+
+  void syncStatepointObserved(Register Old, Register New) {
+    if (isStatepointObserved(Old))
+      addStatepointObserved(New);
+  }
 };
 
 /// Iterate over the pressure sets affected by the given physical or virtual

@@ -31,6 +31,7 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
 #include "llvm/CodeGen/MachineDominators.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -1071,6 +1072,9 @@ void InlineSpiller::spillAll() {
 
   if (Original != Edit->getReg())
     VRM.assignVirt2StackSlot(Edit->getReg(), StackSlot);
+
+  if (MRI.isStatepointObserved(Original))
+    MF.getFrameInfo().markAsStatepointSpillSlotObjectIndex(StackSlot);
 
   assert(StackInt->getNumValNums() == 1 && "Bad stack interval values");
   for (unsigned Reg : RegsToSpill)

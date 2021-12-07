@@ -79,13 +79,14 @@ public:
 private:
   bool rewriteStatepoints(MachineFunction &);
   bool rewriteStatepoint(MachineFunction &, MachineInstr *MI);
-  const SmallVector<Register, 4> &collectSplitRegs(Register);
+  const DenseSet<Register> getVirtRegHasPhysSet();
 
-  DenseMap<Register, SmallVector<Register, 4>> SplitRegMap;
+  DenseSet<Register> VirtRegHasPhysSet;
   SlotIndexes *Indexes;
   LiveIntervals *LIS;
   LiveStacks *LSS;
   VirtRegMap *VRM;
+  MachineRegisterInfo *MRI;
 };
 
 static MachineInstr *getSingleDef(const MachineRegisterInfo &MRI,
@@ -204,41 +205,18 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
   if (StartIdx == StatePoint->getNumOperands())
     return false;
 
-  MachineInstr *NewMI = MF.CreateMachineInstr(TII->get(StatePoint->getOpcode()),
-                                              StatePoint->getDebugLoc(), true);
-  MachineInstrBuilder MIB(MF, NewMI);
-
-  // No need to fold return, the meta data, and function arguments
-  for (unsigned i = 0; i < StartIdx; ++i)
-    MIB.add(StatePoint->getOperand(i));
-
-  auto &IDMap = MRI->getStatePointIDMap();
-  auto &RegInfoVector = IDMap[ID];
-
-  for (unsigned i = StartIdx; i < StatePoint->getNumOperands(); ++i) {
+  bool Changed = false;
+  for (unsigned i = StatePoint->getNumOperands() - 1; i >= StartIdx; --i) {
     MachineOperand &MO = StatePoint->getOperand(i);
     if (!MO.isReg() || Register::isPhysicalRegister(MO.getReg())) {
-      MIB.add(MO);
       continue;
     }
-    Register Reg = MO.getReg();
-    unsigned SpillSize;
-    unsigned SpillOffset;
-    // Compute the spill slot size and offset.
-    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
-    bool Valid =
-        TII->getStackSlotRange(RC, MO.getSubReg(), SpillSize, SpillOffset, MF);
-    if (!Valid)
-      report_fatal_error("cannot spill statepoint subregister operand");
-    RegInfoVector.emplace_back(
-        MachineRegisterInfo::StatePointRegInfo{Reg, SpillSize, SpillOffset});
+    MRI->addStatepointObserved(MO.getReg());
+    StatePoint->RemoveOperand(i);
+    Changed = true;
   }
 
-  MachineBasicBlock *MBB = StatePoint->getParent();
-  MachineBasicBlock::iterator Pos = StatePoint;
-  MBB->insert(Pos, NewMI);
-  MBB->erase(StatePoint);
-  return !IDMap.empty();
+  return Changed;
 }
 
 #undef DEBUG_TYPE
@@ -274,7 +252,8 @@ bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
   LIS = &getAnalysis<LiveIntervals>();
   LSS = &getAnalysis<LiveStacks>();
   VRM = &getAnalysis<VirtRegMap>();
-  SplitRegMap.clear();
+  MRI = &MF.getRegInfo();
+  VirtRegHasPhysSet.clear();
   return rewriteStatepoints(MF);
 }
 
@@ -311,12 +290,7 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     llvm_unreachable("unexpected stackmap opcode");
   }
   MachineRegisterInfo *MRI = &MF.getRegInfo();
-  const auto &IDMap = MRI->getStatePointIDMap();
-  if (IDMap.empty())
-    return false;
-  auto Found = IDMap.find(ID);
-  if (Found == IDMap.end())
-    return false;
+  MachineFrameInfo *MFI = &MF.getFrameInfo();
   // Ready to rebuild the StatePoint.
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   const TargetInstrInfo *TII = STI.getInstrInfo();
@@ -328,57 +302,39 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
 
   // Check Any Stack Slot overlaps this StatePoint.
   SlotIndex Index = Indexes->getInstructionIndex(*StatePoint);
-  const auto &RegInfoVector = Found->second;
-  DenseSet<unsigned> SeenRegs;
+  Index = Index.getNextSlot();
 
-  auto AddStackSlot =
-      [&](const MachineRegisterInfo::StatePointRegInfo &RegInfo) {
-        int StackSlot = VRM->getStackSlot(RegInfo.Reg);
-        if (StackSlot == VirtRegMap::NO_STACK_SLOT)
-          return;
-        LiveInterval &Interval = LSS->getInterval(StackSlot);
-        if (!Interval.liveAt(Index))
-          return;
-        // Add the Stack Slot Info.
-        MIB.addImm(StackMaps::IndirectMemRefOp);
-        MIB.addImm(RegInfo.SpillSize);
-        MIB.addFrameIndex(StackSlot);
-        MIB.addImm(RegInfo.SpillOffset);
-      };
+  auto AddStackSlot = [&](int StackSlot) {
+    LiveInterval &Interval = LSS->getInterval(StackSlot);
+    if (!Interval.liveAt(Index))
+      return;
+    // Add the Stack Slot Info.
+    int SpillSize = MFI->getObjectSize(StackSlot);
+    MIB.addImm(StackMaps::IndirectMemRefOp);
+    MIB.addImm(SpillSize);
+    MIB.addFrameIndex(StackSlot);
+    MIB.addImm(0);
+  };
 
   auto AddPhysIfLiveOut = [&](Register Reg) {
-    if (!VRM->hasPhys(Reg)) {
-      return false;
-    }
     if (!LIS->hasInterval(Reg) || !LIS->getInterval(Reg).liveAt(Index)) {
       return false;
     }
-    MIB.addReg(VRM->getPhys(Reg));
+    // Must mark renamable or Machine Copy Propagation will not change it.
+    MIB.addReg(VRM->getPhys(Reg), RegState::Renamable);
     return true;
   };
 
-  for (const auto &RegInfo : RegInfoVector) {
-    LLVM_DEBUG(
-        dbgs() << "Trying to rewrite for ID: " << ID << "; Reg: "
-               << printReg(RegInfo.Reg, MF.getRegInfo().getTargetRegisterInfo())
-               << "\n");
-    if (Register::isPhysicalRegister(RegInfo.Reg)) {
-      MIB.addReg(RegInfo.Reg);
-      continue;
-    }
-    if (SeenRegs.insert(RegInfo.Reg).second == false)
-      continue;
-    assert(VRM->getOriginal(RegInfo.Reg) == RegInfo.Reg);
-    AddStackSlot(RegInfo);
-    // Add live phys registers to MIB if targeted.
-    if (AddPhysIfLiveOut(RegInfo.Reg))
-      continue;
-    const auto &split = collectSplitRegs(RegInfo.Reg);
-    for (auto Reg : split) {
-      if (AddPhysIfLiveOut(Reg))
-        break;
-    }
+  // Add Stack Slots
+  for (int i = 0, e = MFI->getObjectIndexEnd(); i != e; ++i) {
+    if (MFI->isStatepointSpillSlotObjectIndex(i))
+      AddStackSlot(i);
   }
+
+  for (Register r : getVirtRegHasPhysSet()) {
+    AddPhysIfLiveOut(r);
+  }
+
   MachineBasicBlock *MBB = StatePoint->getParent();
   MachineBasicBlock::iterator Pos = StatePoint;
   MBB->insert(Pos, NewMI);
@@ -387,15 +343,20 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
   return true;
 }
 
-const SmallVector<Register, 4> &
-StatepointRewrite::collectSplitRegs(Register Origin) {
-  auto Found = SplitRegMap.find(Origin);
-  if (Found != SplitRegMap.end())
-    return Found->second;
-  // Cache the result.
-  auto p = SplitRegMap.try_emplace(Origin, VRM->collectSplitRegs(Origin));
-  assert(p.second);
-  return p.first->second;
+const DenseSet<Register> StatepointRewrite::getVirtRegHasPhysSet() {
+  if (!VirtRegHasPhysSet.empty())
+    return VirtRegHasPhysSet;
+
+  for (unsigned i = 0, E = MRI->getNumVirtRegs(); i != E; ++i) {
+    Register r(Register::index2VirtReg(i));
+    if (!VRM->hasPhys(r))
+      continue;
+    if (!MRI->isStatepointObserved(r) &&
+        !MRI->isStatepointObserved(VRM->getOriginal(r)))
+      continue;
+    VirtRegHasPhysSet.insert(r);
+  }
+  return VirtRegHasPhysSet;
 }
 
 FunctionPass *llvm::createStatepointSimplifyPass() {

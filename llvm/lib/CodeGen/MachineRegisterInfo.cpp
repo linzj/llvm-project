@@ -393,6 +393,7 @@ void MachineRegisterInfo::replaceRegWith(unsigned FromReg, unsigned ToReg) {
     }
   }
   updateJoinCopy(FromReg, ToReg);
+  syncStatepointObserved(FromReg, ToReg);
 }
 
 /// getVRegDef - Return the machine instr that defines the specified virtual
@@ -470,10 +471,6 @@ void MachineRegisterInfo::updateJoinCopy(unsigned VReg, unsigned VNewReg) {
     if (I->second == VReg) {
       I->second = VNewReg;
     }
-  for (auto I = StatePointIDMap.begin(), E = StatePointIDMap.end(); I != E; ++I)
-    for (auto J = I->second.begin(), JE = I->second.end(); J != JE; ++J)
-      if (J->Reg == VReg)
-        J->Reg = VNewReg;
 }
 
 /// EmitLiveInCopies - Emit copies to initialize livein virtual registers
