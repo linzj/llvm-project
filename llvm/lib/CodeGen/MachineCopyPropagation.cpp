@@ -60,6 +60,7 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
@@ -409,6 +410,17 @@ bool MachineCopyPropagation::isForwardableRegClassCopy(const MachineInstr &Copy,
   if (const TargetRegisterClass *URC =
           UseI.getRegClassConstraint(UseIdx, TII, TRI))
     return URC->contains(CopySrcReg);
+
+  // Check if a STATEPOINT. If so, all the recorded phys should be forwardable.
+  if (UseI.getOpcode() == TargetOpcode::STATEPOINT) {
+    StatepointOpers Op(&UseI);
+    unsigned StartIdx = Op.getVarIdx();
+    int64_t NumDeoptArgs = UseI.getOperand(StartIdx + 5).getImm();
+    StartIdx += 6 + NumDeoptArgs;
+    if (UseIdx >= StartIdx)
+      return true;
+    return false;
+  }
 
   if (!UseI.isCopy())
     return false;
