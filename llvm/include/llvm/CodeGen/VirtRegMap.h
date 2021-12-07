@@ -183,7 +183,6 @@ public:
   LLVM_ABI void assignVirt2StackSlot(Register virtReg, int SS);
 
   /// Collect the Register list that split from original.
-  SmallVector<Register, 4> collectSplitRegs(Register original);
 
   LLVM_ABI void print(raw_ostream &OS, const Module *M = nullptr) const;
   LLVM_ABI void dump() const;

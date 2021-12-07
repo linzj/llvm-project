@@ -201,6 +201,9 @@ class RegisterCoalescer : private LiveRangeEdit::Delegate {
   /// LiveRangeEdit callback for eliminateDeadDefs().
   void LRE_WillEraseInstruction(MachineInstr *MI) override;
 
+  /// LiveRangeEdit callback for eliminateDeadDefs().
+  void LRE_DidCloneVirtReg(Register New, Register Old) override;
+
   /// Coalesce the LocalWorkList.
   void coalesceLocals();
 
@@ -621,6 +624,10 @@ void RegisterCoalescer::eliminateDeadDefs(LiveRangeEdit *Edit) {
 void RegisterCoalescer::LRE_WillEraseInstruction(MachineInstr *MI) {
   // MI may be in WorkList. Make sure we don't visit it.
   ErasedInstrs.insert(MI);
+}
+
+void RegisterCoalescer::LRE_DidCloneVirtReg(Register New, Register Old) {
+  MRI->syncStatepointObserved(Old, New);
 }
 
 bool RegisterCoalescer::adjustCopiesBackFrom(const CoalescerPair &CP,
@@ -2338,6 +2345,8 @@ bool RegisterCoalescer::joinCopy(
   TRI->updateRegAllocHint(CP.getSrcReg(), CP.getDstReg(), *MF);
 
   MRI->updateJoinCopy(CP.getSrcReg(), CP.getDstReg());
+
+  MRI->syncStatepointObserved(CP.getSrcReg(), CP.getDstReg());
 
   LLVM_DEBUG({
     dbgs() << "\tSuccess: " << printReg(CP.getSrcReg(), TRI, CP.getSrcIdx())
