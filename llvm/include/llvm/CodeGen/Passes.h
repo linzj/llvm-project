@@ -432,8 +432,6 @@ namespace llvm {
 
   /// Simplify state point related machine instructions, like RELOCATE_DEF.
   FunctionPass *createStatepointSimplifyPass();
-  /// Remove the operands from state points.
-  FunctionPass *createStatepointRemoveOperandsPass();
   /// Rewrite the statepoints with the stack slot they should be interested in.
   FunctionPass *createStatepointRewritePass();
 

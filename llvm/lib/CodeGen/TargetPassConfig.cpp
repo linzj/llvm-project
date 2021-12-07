@@ -1165,7 +1165,6 @@ void TargetPassConfig::addOptimizedRegAlloc() {
 
   addPass(&TwoAddressInstructionPassID, false);
   addPass(&RegisterCoalescerID);
-  addPass(createStatepointRemoveOperandsPass());
 
   // The machine scheduler may accidentally create disconnected components
   // when moving subregister definitions around, avoid this by splitting them to
