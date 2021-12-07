@@ -1818,8 +1818,14 @@ bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
   const VNInfo *VNI = JoinVInt.getValNumInfo(0);
   const SlotIndexes &Indexes = *LIS->getSlotIndexes();
   MachineInstr *DefMI = Indexes.getInstructionFromIndex(VNI->def);
-  if (!DefMI->isFullCopy())
-    return true;
+  if (!DefMI->isFullCopy()) {
+    // Bailout those can be re-mat.
+    // If a re-mat candidate being joined into those are not,
+    // an enlarged stack slot live interval will be form.
+    // Then the value is re-matted, the stack slot will have a hole
+    // in the middle. It will jeopardise the statepoint recording.
+    return !TII->isTriviallyReMaterializable(*DefMI);
+  }
 
   Register SrcReg = DefMI->getOperand(1).getReg();
   // Check if is a reserved phys regs.
