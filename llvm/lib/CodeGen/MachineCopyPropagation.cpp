@@ -405,8 +405,12 @@ public:
 
     // Check that the available copy isn't clobbered by any regmasks between
     // itself and the destination.
+    auto EndIterator = DestCopy.getIterator();
+    if (DestCopy.getOpcode() == TargetOpcode::STATEPOINT)
+      ++EndIterator;
+
     for (const MachineInstr &MI :
-         make_range(AvailCopy->getIterator(), DestCopy.getIterator()))
+         make_range(AvailCopy->getIterator(), EndIterator))
       for (const MachineOperand &MO : MI.operands())
         if (MO.isRegMask())
           if (MO.clobbersPhysReg(AvailSrc) || MO.clobbersPhysReg(AvailDst))
