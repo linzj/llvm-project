@@ -231,8 +231,12 @@ public:
     // itself and the destination.
     Register AvailSrc = AvailCopy->getOperand(1).getReg();
     Register AvailDef = AvailCopy->getOperand(0).getReg();
+    auto EndIterator = DestCopy.getIterator();
+    if (DestCopy.getOpcode() == TargetOpcode::STATEPOINT)
+      ++EndIterator;
+
     for (const MachineInstr &MI :
-         make_range(AvailCopy->getIterator(), DestCopy.getIterator()))
+         make_range(AvailCopy->getIterator(), EndIterator))
       for (const MachineOperand &MO : MI.operands())
         if (MO.isRegMask())
           if (MO.clobbersPhysReg(AvailSrc) || MO.clobbersPhysReg(AvailDef))
