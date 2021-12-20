@@ -18,6 +18,7 @@
 
 #include "llvm/ADT/IndexedMap.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TileShapeInfo.h"
 #include "llvm/IR/PassManager.h"
@@ -138,6 +139,7 @@ public:
   /// records virtReg is a split live interval from SReg.
   void setIsSplitFromReg(Register virtReg, Register SReg) {
     Virt2SplitMap[virtReg] = SReg;
+    MRI->syncStatepointObserved(SReg, virtReg);
     if (hasShape(SReg)) {
       Virt2ShapeMap[virtReg] = getShape(SReg);
     }

@@ -162,6 +162,8 @@ void LiveIntervals::analyze(MachineFunction &fn) {
   TRI = MF->getSubtarget().getRegisterInfo();
   TII = MF->getSubtarget().getInstrInfo();
 
+  IsV8CC = MF->getFunction().getCallingConv() == CallingConv::V8CC;
+
   if (!LICalc)
     LICalc = std::make_unique<LiveIntervalCalc>();
 
@@ -177,6 +179,19 @@ void LiveIntervals::analyze(MachineFunction &fn) {
     // units, including reserved registers.
     for (MCRegUnit Unit : TRI->regunits())
       getRegUnit(Unit);
+  }
+
+  // Initialize V8CC Pointer PhysReg.
+  NotV8CCPointers.clear();
+  if (IsV8CC) {
+    NotV8CCPointers.resize(TRI->getNumRegs(), true);
+    const TargetRegisterClass *PointerRegClass = TRI->getPointerRegClass();
+    for (MCPhysReg Reg : PointerRegClass->getRegisters()) {
+      for (MCSubRegIterator SubReg(Reg, TRI, true); SubReg.isValid();
+           ++SubReg) {
+        NotV8CCPointers.reset(*SubReg);
+      }
+    }
   }
 }
 
@@ -992,6 +1007,9 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
       }
       // Remove usable registers clobbered by this mask.
       UsableRegs.clearBitsNotInMask(Bits[Idx]);
+      // Remove usable registers are pointers.
+      if (IsV8CC && !MRI->isStatepointObserved(LI.reg()))
+        UsableRegs &= NotV8CCPointers;
   };
   while (true) {
     assert(*SlotI >= LiveI->start);
