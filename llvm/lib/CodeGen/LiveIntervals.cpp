@@ -131,6 +131,8 @@ bool LiveIntervals::runOnMachineFunction(MachineFunction &fn) {
   Indexes = &getAnalysis<SlotIndexes>();
   DomTree = &getAnalysis<MachineDominatorTree>();
 
+  IsV8CC = MF->getFunction().getCallingConv() == CallingConv::V8CC;
+
   if (!LRCalc)
     LRCalc = new LiveRangeCalc();
 
@@ -148,6 +150,20 @@ bool LiveIntervals::runOnMachineFunction(MachineFunction &fn) {
       getRegUnit(i);
   }
   LLVM_DEBUG(dump());
+
+  // Initialize V8CC Pointer PhysReg.
+  NotV8CCPointers.clear();
+  if (IsV8CC) {
+    NotV8CCPointers.resize(TRI->getNumRegs(), true);
+    const TargetRegisterClass *PointerRegClass = TRI->getPointerRegClass(fn);
+    for (MCPhysReg Reg : PointerRegClass->getRegisters()) {
+      for (MCSubRegIterator SubReg(Reg, TRI, true); SubReg.isValid();
+           ++SubReg) {
+        NotV8CCPointers.reset(*SubReg);
+      }
+    }
+  }
+
   return true;
 }
 
@@ -932,6 +948,10 @@ bool LiveIntervals::checkRegMaskInterference(LiveInterval &LI,
       }
       // Remove usable registers clobbered by this mask.
       UsableRegs.clearBitsNotInMask(Bits[SlotI-Slots.begin()]);
+      // Remove usable registers are pointers.
+      if (IsV8CC && !MRI->isStatepointObserved(LI.reg)) {
+        UsableRegs &= NotV8CCPointers;
+      }
       if (++SlotI == SlotE)
         return Found;
     }

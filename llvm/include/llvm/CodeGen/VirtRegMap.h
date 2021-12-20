@@ -18,6 +18,7 @@
 
 #include "llvm/ADT/IndexedMap.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Pass.h"
@@ -134,6 +135,7 @@ class TargetInstrInfo;
     /// records virtReg is a split live interval from SReg.
     void setIsSplitFromReg(Register virtReg, unsigned SReg) {
       Virt2SplitMap[virtReg.id()] = SReg;
+      MRI->syncStatepointObserved(SReg, virtReg);
     }
 
     /// returns the live interval virtReg is split from.
