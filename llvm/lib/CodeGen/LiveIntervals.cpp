@@ -1007,9 +1007,18 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
       }
       // Remove usable registers clobbered by this mask.
       UsableRegs.clearBitsNotInMask(Bits[Idx]);
-      // Remove usable registers are pointers.
-      if (IsV8CC && !MRI->isStatepointObserved(LI.reg()))
-        UsableRegs &= NotV8CCPointers;
+      // Remove usable registers are pointers if the CSRInterferesNonTagged
+      // flag is set on the statepoint.
+      if (IsV8CC && !MRI->isStatepointObserved(LI.reg())) {
+        MachineInstr *MI = Indexes->getInstructionFromIndex(Slots[Idx]);
+        if (MI->getOpcode() == TargetOpcode::STATEPOINT) {
+          StatepointOpers Op(MI);
+          const int64_t Flags = MI->getOperand(Op.getFlagsIdx()).getImm();
+          if (Flags &
+              static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged))
+            UsableRegs &= NotV8CCPointers;
+        }
+      }
   };
   while (true) {
     assert(*SlotI >= LiveI->start);

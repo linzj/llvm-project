@@ -11101,9 +11101,8 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setDartCCall(Call->hasFnAttr("dart-c-call"))
       .setStatepointLiveOnly(Call->hasFnAttr("statepoint-live-only"));
 
-  if (Call->hasFnAttr("custom-regmask")) {
-    Attribute Attr = Call->getFnAttr("custom-regmask");
-    assert(Attr.isStringAttribute());
+  Attribute Attr = Call->getFnAttr("custom-regmask");
+  if (Attr.isStringAttribute()) {
     CLI.setCustomRegMask(Attr.getValueAsString());
   }
 }

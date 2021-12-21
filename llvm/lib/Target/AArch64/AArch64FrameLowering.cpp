@@ -392,6 +392,10 @@ static bool isTargetWindows(const MachineFunction &MF) {
   return MF.getSubtarget<AArch64Subtarget>().isTargetWindows();
 }
 
+static bool isTargetDart(const MachineFunction &MF) {
+  return MF.getSubtarget().getTargetTriple().getEnvironment() == Triple::Dart;
+}
+
 bool AArch64FrameLowering::hasSVECalleeSavesAboveFrameRecord(
     const MachineFunction &MF) const {
   auto *AFI = MF.getInfo<AArch64FunctionInfo>();
@@ -1583,6 +1587,10 @@ static bool produceCompactUnwindFrame(const AArch64FrameLowering &AFL,
   const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
   AttributeList Attrs = MF.getFunction().getAttributes();
   AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  // Dart needs spill as pair.
+  if (isTargetDart(MF))
+    return true;
+
   return Subtarget.isTargetMachO() &&
          !(Subtarget.getTargetLowering()->supportSwiftError() &&
            Attrs.hasAttrSomewhere(Attribute::SwiftError)) &&

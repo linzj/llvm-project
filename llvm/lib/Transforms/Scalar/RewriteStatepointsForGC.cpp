@@ -1746,6 +1746,14 @@ static StringRef getDeoptLowering(CallBase *Call) {
   return "live-through";
 }
 
+static bool isCSRInterferesNonTagged(CallBase *Call) {
+  const char *DeoptLowering = "csr-interferes-non-tagged";
+  if (Call->hasFnAttr(DeoptLowering)) {
+    return true;
+  }
+  return false;
+}
+
 static void
 makeStatepointExplicitImpl(CallBase *Call, /* to replace */
                            const SmallVectorImpl<Value *> &BasePtrs,
@@ -1798,6 +1806,9 @@ makeStatepointExplicitImpl(CallBase *Call, /* to replace */
   else {
     assert(DeoptLowering == "live-through" && "Unsupported value!");
   }
+
+  if (isCSRInterferesNonTagged(Call))
+    Flags |= uint32_t(StatepointFlags::CSRInterferesNonTagged);
 
   FunctionCallee CallTarget(Call->getFunctionType(), Call->getCalledOperand());
   if (Function *F = dyn_cast<Function>(CallTarget.getCallee())) {

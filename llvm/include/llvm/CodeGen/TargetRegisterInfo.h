@@ -1116,6 +1116,8 @@ public:
   /// Returns a copy of the call preserved mask with the bits of the
   /// comma-separated register list Regs cleared.
   const uint32_t *UpdateRegMask(MachineFunction &MF, StringRef Regs) const;
+  void UpdateCustomCalleeSavedRegsFromAttr(MachineFunction &MF,
+                                           StringRef Regs) const;
 };
 
 //===----------------------------------------------------------------------===//

@@ -9473,6 +9473,12 @@ SDValue AArch64TargetLowering::LowerFormalArguments(
 
   if (Subtarget->hasCustomCallingConv())
     Subtarget->getRegisterInfo()->UpdateCustomCalleeSavedRegs(MF);
+  else {
+    Attribute Attr = MF.getFunction().getFnAttribute("custom-regmask");
+    if (Attr.isStringAttribute())
+      Subtarget->getRegisterInfo()->UpdateCustomCalleeSavedRegsFromAttr(
+          MF, Attr.getValueAsString());
+  }
 
   if (Subtarget->isTargetWindows() || hasInlineStackProbe(MF)) {
     SDValue Size;
