@@ -553,6 +553,35 @@ const uint32_t *TargetRegisterInfo::UpdateRegMask(MachineFunction &MF,
   return UpdatedMask;
 }
 
+void TargetRegisterInfo::UpdateCustomCalleeSavedRegsFromAttr(
+    MachineFunction &MF, StringRef Regs) const {
+  // First init the Names2Regs.
+  // Comes from MIRParser.
+  StringMap<MCPhysReg> Names2Regs;
+  Names2Regs.insert(std::make_pair("noreg", 0));
+
+  for (unsigned I = 0, E = getNumRegs(); I < E; ++I) {
+    bool WasInserted =
+        Names2Regs.insert(std::make_pair(StringRef(getName(I)).lower(), I))
+            .second;
+    (void)WasInserted;
+    assert(WasInserted && "Expected registers to be unique case-insensitively");
+  }
+  SmallVector<MCPhysReg, 32> UpdatedCSRs;
+
+  while (!Regs.empty()) {
+    StringRef RegName;
+    std::tie(RegName, Regs) = Regs.split(",");
+    auto RegInfo = Names2Regs.find(RegName);
+
+    assert(RegInfo != Names2Regs.end() && "Unknown reg name");
+    UpdatedCSRs.push_back(RegInfo->second);
+  }
+  // Register lists are zero-terminated.
+  UpdatedCSRs.push_back(0);
+  MF.getRegInfo().setCalleeSavedRegs(UpdatedCSRs);
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD
 void TargetRegisterInfo::dumpReg(unsigned Reg, unsigned SubRegIndex,

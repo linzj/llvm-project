@@ -49,7 +49,22 @@ enum class StatepointFlags {
   /// unused argument registers or other non-callee saved registers.
   DeoptLiveIn = 2,
 
-  MaskAll = 3 ///< A bitmask that includes all valid flags.
+  /// Interference for tagged values.
+  /// Some runtime call sites will record the tagged register values.
+  /// The registers containing non-tagged values will not be recorded.
+  /// So this call site accepts the non-tagged register to live through and
+  /// will not interfere with the non-tagged value.
+  /// They are static calls, and the targets are deterministic. We know exactly
+  /// how many callee-saved-registers they push. For dynamic calls that's and
+  /// another story. We have no idea how many callee-save-registers are pushed
+  /// at all. So there is a new restriction: the non-tagged values are not
+  /// allowed to reside in the registers to live through. And the callee
+  /// function will record all the values that resided in the registers. The
+  /// callee function will just push the callee saved registers in the stack and
+  /// record them anyway.
+  CSRInterferesNonTagged = 4,
+
+  MaskAll = 7 ///< A bitmask that includes all valid flags.
 };
 
 class GCRelocateInst;

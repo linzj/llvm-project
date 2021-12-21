@@ -33,10 +33,12 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/SlotIndexes.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/IR/Statepoint.h"
 #include "llvm/MC/LaneBitmask.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Pass.h"
@@ -948,9 +950,19 @@ bool LiveIntervals::checkRegMaskInterference(LiveInterval &LI,
       }
       // Remove usable registers clobbered by this mask.
       UsableRegs.clearBitsNotInMask(Bits[SlotI-Slots.begin()]);
-      // Remove usable registers are pointers.
+      // Remove usable registers are pointers if InterferenceWithNonTagged flag
+      // is set.
       if (IsV8CC && !MRI->isStatepointObserved(LI.reg)) {
-        UsableRegs &= NotV8CCPointers;
+        MachineInstr *MI = Indexes->getInstructionFromIndex(*SlotI);
+        if (MI->getOpcode() == TargetOpcode::STATEPOINT) {
+          StatepointOpers Op(MI);
+          const int64_t flags =
+              MI->getOperand(Op.getVarIdx() + StatepointOpers::FlagsOffset)
+                  .getImm();
+          if (flags &
+              static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged))
+            UsableRegs &= NotV8CCPointers;
+        }
       }
       if (++SlotI == SlotE)
         return Found;

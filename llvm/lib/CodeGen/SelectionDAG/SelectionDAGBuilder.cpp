@@ -8704,10 +8704,9 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
       .setIsPatchPoint(IsPatchPoint)
       .setStatepointLiveOnly(Call->hasFnAttr("statepoint-live-only"));
 
-  if (Call->hasFnAttr("custom-regmask")) {
-    Attribute Attr =
-        Call->getAttribute(AttributeList::FunctionIndex, "custom-regmask");
-    assert(Attr.isStringAttribute());
+  Attribute Attr =
+      Call->getAttribute(AttributeList::FunctionIndex, "custom-regmask");
+  if (Attr.isStringAttribute()) {
     CLI.setCustomRegMask(Attr.getValueAsString());
   }
 }

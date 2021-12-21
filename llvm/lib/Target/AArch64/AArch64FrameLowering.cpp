@@ -865,6 +865,10 @@ static bool isTargetDarwin(const MachineFunction &MF) {
   return MF.getSubtarget<AArch64Subtarget>().isTargetDarwin();
 }
 
+static bool isTargetDart(const MachineFunction &MF) {
+  return MF.getSubtarget().getTargetTriple().getEnvironment() == Triple::Dart;
+}
+
 static bool isTargetWindows(const MachineFunction &MF) {
   return MF.getSubtarget<AArch64Subtarget>().isTargetWindows();
 }
@@ -1028,7 +1032,9 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   // For funclets the FP belongs to the containing function.
   if (!IsFunclet && HasFP) {
     // Only set up FP if we actually need to.
-    int64_t FPOffset = isTargetDarwin(MF) ? (AFI->getCalleeSavedStackSize() - 16) : 0;
+    int64_t FPOffset = isTargetDarwin(MF) || isTargetDart(MF)
+                           ? (AFI->getCalleeSavedStackSize() - 16)
+                           : 0;
 
     if (CombineSPBump)
       FPOffset += AFI->getLocalStackSize();
@@ -1730,8 +1736,9 @@ static StackOffset getFPOffset(const MachineFunction &MF, int64_t ObjectOffset) 
 
   unsigned FixedObject =
       getFixedObjectSize(MF, AFI, IsWin64, /*IsFunclet=*/false);
-  unsigned FPAdjust = isTargetDarwin(MF)
-                        ? 16 : AFI->getCalleeSavedStackSize(MF.getFrameInfo());
+  unsigned FPAdjust = isTargetDarwin(MF) || isTargetDart(MF)
+                          ? 16
+                          : AFI->getCalleeSavedStackSize(MF.getFrameInfo());
   return {ObjectOffset + FixedObject + FPAdjust, MVT::i8};
 }
 
@@ -1913,6 +1920,10 @@ static unsigned getPrologueDeath(MachineFunction &MF, unsigned Reg) {
 static bool produceCompactUnwindFrame(MachineFunction &MF) {
   const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
   AttributeList Attrs = MF.getFunction().getAttributes();
+  // Dart needs spill as pair.
+  if (isTargetDart(MF))
+    return true;
+
   return Subtarget.isTargetMachO() &&
          !(Subtarget.getTargetLowering()->supportSwiftError() &&
            Attrs.hasAttrSomewhere(Attribute::SwiftError));

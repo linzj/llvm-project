@@ -988,6 +988,8 @@ public:
   }
 
   const uint32_t *UpdateRegMask(MachineFunction &MF, StringRef Regs) const;
+  void UpdateCustomCalleeSavedRegsFromAttr(MachineFunction &MF,
+                                           StringRef Regs) const;
 };
 
 //===----------------------------------------------------------------------===//
