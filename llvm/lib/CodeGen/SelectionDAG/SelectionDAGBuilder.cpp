@@ -8707,7 +8707,10 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
   Attribute Attr =
       Call->getAttribute(AttributeList::FunctionIndex, "custom-regmask");
   if (Attr.isStringAttribute()) {
-    CLI.setCustomRegMask(Attr.getValueAsString());
+    // Invoke breaks the CSR agreement.
+    bool ShouldNotSetCustomRegMask = isa<InvokeInst>(Call);
+    if (!ShouldNotSetCustomRegMask)
+      CLI.setCustomRegMask(Attr.getValueAsString());
   }
 }
 
