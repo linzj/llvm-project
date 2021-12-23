@@ -4301,6 +4301,11 @@ SDValue ARMTargetLowering::LowerFormalArguments(
                          TotalArgRegsSaveSize);
 
   AFI->setArgumentStackSize(CCInfo.getNextStackOffset());
+  // Support custom-regmask
+  Attribute Attr = MF.getFunction().getFnAttribute("custom-regmask");
+  if (Attr.isStringAttribute())
+    Subtarget->getRegisterInfo()->UpdateCustomCalleeSavedRegsFromAttr(
+        MF, Attr.getValueAsString());
 
   return Chain;
 }
