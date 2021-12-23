@@ -133,7 +133,7 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
     if (!Register::isVirtualRegister(DstReg))
       return false;
     // ARM use copy to cast from FP to SI. Check it.
-    if (MRI->getRegClass(DstReg) != MRI->getRegClass(SrcReg))
+    if (!MRI->constrainRegClass(SrcReg, MRI->getRegClass(DstReg)))
       return false;
     return true;
   };
