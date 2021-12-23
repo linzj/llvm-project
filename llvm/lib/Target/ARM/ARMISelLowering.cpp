@@ -4571,6 +4571,12 @@ SDValue ARMTargetLowering::LowerFormalArguments(
         "secure entry function requires arguments on stack", dl.getDebugLoc()));
   }
 
+  // Support custom-regmask
+  Attribute Attr = MF.getFunction().getFnAttribute("custom-regmask");
+  if (Attr.isStringAttribute())
+    Subtarget->getRegisterInfo()->UpdateCustomCalleeSavedRegsFromAttr(
+        MF, Attr.getValueAsString());
+
   return Chain;
 }
 
