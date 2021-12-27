@@ -10,6 +10,8 @@
 // To be written.
 //
 //===----------------------------------------------------------------------===//
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveStacks.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -120,44 +122,63 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   TII = STI.getInstrInfo();
   SmallPtrSet<MachineInstr *, 8> RemoveSet;
+  SmallSet<Register, 8> VisitedSet;
+  SmallVector<Register, 8> WorkingList;
 
-  auto IsValidCopyMI = [&](const MachineInstr &MI) {
-    if (MI.getOpcode() == TargetOpcode::RELOCATE_DEF)
-      return true;
-    if (!MI.isFullCopy())
-      return false;
-    Register SrcReg = MI.getOperand(1).getReg();
-    if (!Register::isVirtualRegister(SrcReg))
-      return false;
-    Register DstReg = MI.getOperand(0).getReg();
-    if (!Register::isVirtualRegister(DstReg))
-      return false;
-    // ARM use copy to cast from FP to SI. Check it.
-    if (!MRI->constrainRegClass(SrcReg, MRI->getRegClass(DstReg)))
-      return false;
-    return true;
+  auto HandleWorkingList = [&](Register ReplaceTo) {
+    while (!WorkingList.empty()) {
+      Register ToReplace = WorkingList.back();
+      WorkingList.pop_back();
+      if (VisitedSet.count(ToReplace))
+        continue;
+      VisitedSet.insert(ToReplace);
+      LLVM_DEBUG(dbgs() << "Replacing "
+                        << printReg(ReplaceTo, MRI->getTargetRegisterInfo())
+                        << " with "
+                        << printReg(ToReplace, MRI->getTargetRegisterInfo())
+                        << ".\n");
+      for (auto It = MRI->use_begin(ToReplace), End = MRI->use_end();
+           It != End;) {
+        MachineOperand &MO = *It;
+        MachineInstr *MI = MO.getParent();
+        ++It;
+        switch (MI->getOpcode()) {
+        case TargetOpcode::RELOCATE_DEF:
+        virtual_reg_dst_from_copy:
+          WorkingList.emplace_back(MI->getOperand(0).getReg());
+          RemoveSet.insert(MI);
+          break;
+        case TargetOpcode::COPY:
+          if (Register::isVirtualRegister(MI->getOperand(0).getReg()))
+            goto virtual_reg_dst_from_copy;
+          LLVM_FALLTHROUGH;
+        default:
+          MO.setReg(ReplaceTo);
+          break;
+        }
+      }
+    }
   };
 
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
-      if (IsValidCopyMI(MI)) {
-        // find the real source.
-        Register Src = MI.getOperand(1).getReg();
-        MachineInstr *DefOfSrc = getSingleDef(*MRI, Src);
-        while (DefOfSrc) {
-          if (!IsValidCopyMI(*DefOfSrc))
-            break;
-          Src = DefOfSrc->getOperand(1).getReg();
-          DefOfSrc = getSingleDef(*MRI, Src);
-        }
-        // Replace Dst with Src.
-        Register Dst = MI.getOperand(0).getReg();
-        MRI->replaceRegWith(Dst, Src);
-        RemoveSet.insert(&MI);
+      if (MI.getOpcode() == TargetOpcode::RELOCATE_DEF) {
+        auto InsertResult = RemoveSet.insert(&MI);
+        // This MachineInstr is int the remove set.
+        // Simply continue;
+        if (!InsertResult.second)
+          continue;
+
+        Register ReplaceTo = MI.getOperand(1).getReg();
+        assert(!VisitedSet.count(ReplaceTo));
+        assert(WorkingList.empty());
+        WorkingList.emplace_back(MI.getOperand(0).getReg());
+        HandleWorkingList(ReplaceTo);
       }
     }
   }
+
   if (RemoveSet.empty())
     return false;
 
