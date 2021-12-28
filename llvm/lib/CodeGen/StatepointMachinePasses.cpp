@@ -63,6 +63,8 @@ private:
 
   bool removeVarFromStatepoint(MachineFunction &MF, MachineInstr *MI);
 
+  bool addPhiToStatepointObservedSet(MachineFunction &MF);
+
   MachineRegisterInfo *MRI;
   const TargetInstrInfo *TII;
 };
@@ -114,6 +116,7 @@ StatepointSimplify::StatepointSimplify()
 bool StatepointSimplify::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = foldRelocateDef(MF);
   Changed |= removeVarFromStatepoints(MF);
+  Changed |= addPhiToStatepointObservedSet(MF);
   return Changed;
 }
 
@@ -160,6 +163,22 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
     }
   };
 
+  auto FindRootDefine = [&](MachineInstr &MI) {
+    Register ReplaceTo = MI.getOperand(1).getReg();
+    Register ToReplace = MI.getOperand(0).getReg();
+    while (true) {
+      MachineInstr *Def = MRI->def_begin(ReplaceTo)->getParent();
+      if (!Def->isFullCopy())
+        break;
+      Register Tmp = Def->getOperand(1).getReg();
+      if (!Register::isVirtualRegister(Tmp))
+        break;
+      ReplaceTo = Tmp;
+      ToReplace = MI.getOperand(0).getReg();
+    }
+    return std::make_tuple(ReplaceTo, ToReplace);
+  };
+
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
@@ -170,10 +189,11 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
         if (!InsertResult.second)
           continue;
 
-        Register ReplaceTo = MI.getOperand(1).getReg();
+        Register ReplaceTo, ToReplace;
+        std::tie(ReplaceTo, ToReplace) = FindRootDefine(MI);
         assert(!VisitedSet.count(ReplaceTo));
         assert(WorkingList.empty());
-        WorkingList.emplace_back(MI.getOperand(0).getReg());
+        WorkingList.emplace_back(ToReplace);
         HandleWorkingList(ReplaceTo);
       }
     }
@@ -237,6 +257,24 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
     Changed = true;
   }
 
+  return Changed;
+}
+
+bool StatepointSimplify::addPhiToStatepointObservedSet(MachineFunction &MF) {
+  bool Changed = false;
+  for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
+    MachineBasicBlock *MBB = &*I;
+    for (MachineInstr &MI : *MBB) {
+      if (MI.isPHI()) {
+        Register PHIDef = MI.getOperand(0).getReg();
+        Register Old = MI.getOperand(1).getReg();
+        if (MRI->isStatepointObserved(Old)) {
+          MRI->addStatepointObserved(PHIDef);
+          Changed = true;
+        }
+      }
+    }
+  }
   return Changed;
 }
 
