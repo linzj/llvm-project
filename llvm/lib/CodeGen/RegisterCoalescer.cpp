@@ -1811,12 +1811,6 @@ bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
   //  B2:
   //  %567 = COPY %444
 
-  // Reject those observed flags are not equal.
-  if (MRI->isStatepointObserved(CP.getDstReg()) !=
-      MRI->isStatepointObserved(CP.getSrcReg())) {
-    return false;
-  }
-
   LiveInterval &JoinVInt = LIS->getInterval(CP.getDstReg());
 
   if (!JoinVInt.containsOneValue())
@@ -2069,6 +2063,8 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
   TRI->updateRegAllocHint(CP.getSrcReg(), CP.getDstReg(), *MF);
 
   MRI->updateJoinCopy(CP.getSrcReg(), CP.getDstReg());
+
+  MRI->syncStatepointObserved(CP.getSrcReg(), CP.getDstReg());
 
   LLVM_DEBUG({
     dbgs() << "\tSuccess: " << printReg(CP.getSrcReg(), TRI, CP.getSrcIdx())

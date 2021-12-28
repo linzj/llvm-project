@@ -63,8 +63,6 @@ private:
 
   bool removeVarFromStatepoint(MachineFunction &MF, MachineInstr *MI);
 
-  bool addPhiToStatepointObservedSet(MachineFunction &MF);
-
   MachineRegisterInfo *MRI;
   const TargetInstrInfo *TII;
 };
@@ -116,7 +114,6 @@ StatepointSimplify::StatepointSimplify()
 bool StatepointSimplify::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = foldRelocateDef(MF);
   Changed |= removeVarFromStatepoints(MF);
-  Changed |= addPhiToStatepointObservedSet(MF);
   return Changed;
 }
 
@@ -124,88 +121,19 @@ bool StatepointSimplify::foldRelocateDef(MachineFunction &MF) {
   MRI = &MF.getRegInfo();
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   TII = STI.getInstrInfo();
-  SmallPtrSet<MachineInstr *, 8> RemoveSet;
-  SmallSet<Register, 8> VisitedSet;
-  SmallVector<Register, 8> WorkingList;
-
-  auto HandleWorkingList = [&](Register ReplaceTo) {
-    while (!WorkingList.empty()) {
-      Register ToReplace = WorkingList.back();
-      WorkingList.pop_back();
-      if (VisitedSet.count(ToReplace))
-        continue;
-      VisitedSet.insert(ToReplace);
-      LLVM_DEBUG(dbgs() << "Replacing "
-                        << printReg(ReplaceTo, MRI->getTargetRegisterInfo())
-                        << " with "
-                        << printReg(ToReplace, MRI->getTargetRegisterInfo())
-                        << ".\n");
-      for (auto It = MRI->use_begin(ToReplace), End = MRI->use_end();
-           It != End;) {
-        MachineOperand &MO = *It;
-        MachineInstr *MI = MO.getParent();
-        ++It;
-        switch (MI->getOpcode()) {
-        case TargetOpcode::RELOCATE_DEF:
-        virtual_reg_dst_from_copy:
-          WorkingList.emplace_back(MI->getOperand(0).getReg());
-          RemoveSet.insert(MI);
-          break;
-        case TargetOpcode::COPY:
-          if (Register::isVirtualRegister(MI->getOperand(0).getReg()))
-            goto virtual_reg_dst_from_copy;
-          LLVM_FALLTHROUGH;
-        default:
-          MO.setReg(ReplaceTo);
-          break;
-        }
-      }
-    }
-  };
-
-  auto FindRootDefine = [&](MachineInstr &MI) {
-    Register ReplaceTo = MI.getOperand(1).getReg();
-    Register ToReplace = MI.getOperand(0).getReg();
-    while (true) {
-      MachineInstr *Def = MRI->def_begin(ReplaceTo)->getParent();
-      if (!Def->isFullCopy())
-        break;
-      Register Tmp = Def->getOperand(1).getReg();
-      if (!Register::isVirtualRegister(Tmp))
-        break;
-      ReplaceTo = Tmp;
-      ToReplace = MI.getOperand(0).getReg();
-    }
-    return std::make_tuple(ReplaceTo, ToReplace);
-  };
+  bool Changed = false;
 
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
       if (MI.getOpcode() == TargetOpcode::RELOCATE_DEF) {
-        auto InsertResult = RemoveSet.insert(&MI);
-        // This MachineInstr is int the remove set.
-        // Simply continue;
-        if (!InsertResult.second)
-          continue;
-
-        Register ReplaceTo, ToReplace;
-        std::tie(ReplaceTo, ToReplace) = FindRootDefine(MI);
-        assert(!VisitedSet.count(ReplaceTo));
-        assert(WorkingList.empty());
-        WorkingList.emplace_back(ToReplace);
-        HandleWorkingList(ReplaceTo);
+        MI.setDesc(TII->get(TargetOpcode::COPY));
+        Changed = true;
       }
     }
   }
 
-  if (RemoveSet.empty())
-    return false;
-
-  for (auto MI : RemoveSet) {
-    MI->removeFromParent();
-  }
-  return !RemoveSet.empty();
+  return Changed;
 }
 
 bool StatepointSimplify::removeVarFromStatepoints(MachineFunction &MF) {
@@ -257,24 +185,6 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
     Changed = true;
   }
 
-  return Changed;
-}
-
-bool StatepointSimplify::addPhiToStatepointObservedSet(MachineFunction &MF) {
-  bool Changed = false;
-  for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
-    MachineBasicBlock *MBB = &*I;
-    for (MachineInstr &MI : *MBB) {
-      if (MI.isPHI()) {
-        Register PHIDef = MI.getOperand(0).getReg();
-        Register Old = MI.getOperand(1).getReg();
-        if (MRI->isStatepointObserved(Old)) {
-          MRI->addStatepointObserved(PHIDef);
-          Changed = true;
-        }
-      }
-    }
-  }
   return Changed;
 }
 
