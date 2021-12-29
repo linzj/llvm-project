@@ -725,3 +725,15 @@ void MachineRegisterInfo::updateDbgUsersToReg(
     }
   }
 }
+
+SmallVector<Register, 8>
+MachineRegisterInfo::getStatePointObservedActiveRegs() {
+  SmallVector<Register, 8> Regs;
+  for (Register Reg : StatepointObserved) {
+    // Ignore the useless registers.
+    if (use_begin(Reg) == use_end())
+      continue;
+    Regs.emplace_back(Reg);
+  }
+  return Regs;
+}

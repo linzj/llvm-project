@@ -1404,9 +1404,6 @@ void InlineSpiller::spillAll() {
   if (Original != Edit->getReg())
     VRM.assignVirt2StackSlot(Edit->getReg(), StackSlot);
 
-  if (MRI.isStatepointObserved(Original))
-    MF.getFrameInfo().markAsStatepointSpillSlotObjectIndex(StackSlot);
-
   assert(StackInt->getNumValNums() == 1 && "Bad stack interval values");
   for (Register Reg : RegsToSpill)
     StackInt->MergeSegmentsInAsValue(LIS.getInterval(Reg),
