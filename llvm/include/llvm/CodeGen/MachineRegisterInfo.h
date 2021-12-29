@@ -61,14 +61,6 @@ public:
     virtual void MRI_NoteNewVirtualRegister(unsigned Reg) = 0;
   };
 
-  /// The entry type of a patch point reg.
-  /// Record the spill info.
-  struct StatePointRegInfo {
-    Register Reg;
-    unsigned SpillSize;
-    unsigned SpillOffset;
-  };
-
 private:
   MachineFunction *MF;
   Delegate *TheDelegate = nullptr;
@@ -1177,7 +1169,10 @@ public:
     MachineInstr *operator->() const { return &operator*(); }
   };
 
-  void addStatepointObserved(Register r) { StatepointObserved.insert(r); }
+  void addStatepointObserved(Register r) {
+    assert(Register::isVirtualRegister(r));
+    StatepointObserved.insert(r);
+  }
 
   bool isStatepointObserved(Register r) {
     return StatepointObserved.count(r) != 0;
@@ -1187,6 +1182,8 @@ public:
     if (isStatepointObserved(Old))
       addStatepointObserved(New);
   }
+
+  SmallVector<Register, 8> getStatePointObservedActiveRegs();
 };
 
 /// Iterate over the pressure sets affected by the given physical or virtual

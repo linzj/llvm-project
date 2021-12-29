@@ -1819,14 +1819,8 @@ bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
   const VNInfo *VNI = JoinVInt.getValNumInfo(0);
   const SlotIndexes &Indexes = *LIS->getSlotIndexes();
   MachineInstr *DefMI = Indexes.getInstructionFromIndex(VNI->def);
-  if (!DefMI->isFullCopy()) {
-    // Bailout those can be re-mat.
-    // If a re-mat candidate being joined into those are not,
-    // an enlarged stack slot live interval will be form.
-    // Then the value is re-matted, the stack slot will have a hole
-    // in the middle. It will jeopardise the statepoint recording.
-    return !TII->isTriviallyReMaterializable(*DefMI);
-  }
+  if (!DefMI->isFullCopy())
+    return true;
 
   Register SrcReg = DefMI->getOperand(1).getReg();
   // Check if is a reserved phys regs.
@@ -2064,7 +2058,8 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
 
   MRI->updateJoinCopy(CP.getSrcReg(), CP.getDstReg());
 
-  MRI->syncStatepointObserved(CP.getSrcReg(), CP.getDstReg());
+  if (Register::isVirtualRegister(CP.getDstReg()))
+    MRI->syncStatepointObserved(CP.getSrcReg(), CP.getDstReg());
 
   LLVM_DEBUG({
     dbgs() << "\tSuccess: " << printReg(CP.getSrcReg(), TRI, CP.getSrcIdx())
