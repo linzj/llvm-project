@@ -118,6 +118,8 @@ class HoistSpillHelper : private LiveRangeEdit::Delegate {
   /// sibling there and use it as the source of the new spill.
   DenseMap<unsigned, SmallSetVector<unsigned, 16>> Virt2SiblingsMap;
 
+  SmallSet<int, 8> &StackSlotNeedToShrink;
+
   bool isSpillCandBB(LiveInterval &OrigLI, VNInfo &OrigVNI,
                      MachineBasicBlock &BB, unsigned &LiveReg);
 
@@ -140,7 +142,7 @@ class HoistSpillHelper : private LiveRangeEdit::Delegate {
 
 public:
   HoistSpillHelper(MachineFunctionPass &pass, MachineFunction &mf,
-                   VirtRegMap &vrm)
+                   VirtRegMap &vrm, SmallSet<int, 8> &_StackSlotNeedToShrink)
       : MF(mf), LIS(pass.getAnalysis<LiveIntervals>()),
         LSS(pass.getAnalysis<LiveStacks>()),
         AA(&pass.getAnalysis<AAResultsWrapperPass>().getAAResults()),
@@ -149,7 +151,8 @@ public:
         MRI(mf.getRegInfo()), TII(*mf.getSubtarget().getInstrInfo()),
         TRI(*mf.getSubtarget().getRegisterInfo()),
         MBFI(pass.getAnalysis<MachineBlockFrequencyInfo>()),
-        IPA(LIS, mf.getNumBlockIDs()) {}
+        IPA(LIS, mf.getNumBlockIDs()),
+        StackSlotNeedToShrink(_StackSlotNeedToShrink) {}
 
   void addToMergeableSpills(MachineInstr &Spill, int StackSlot,
                             unsigned Original);
@@ -190,6 +193,9 @@ class InlineSpiller : public Spiller {
   // Dead defs generated during spilling.
   SmallVector<MachineInstr*, 8> DeadDefs;
 
+  // Stack slot needs to shrink
+  SmallSet<int, 8> StackSlotNeedToShrink;
+
   // Object records spills information and does the hoisting.
   HoistSpillHelper HSpiller;
 
@@ -205,7 +211,7 @@ public:
         MRI(mf.getRegInfo()), TII(*mf.getSubtarget().getInstrInfo()),
         TRI(*mf.getSubtarget().getRegisterInfo()),
         MBFI(pass.getAnalysis<MachineBlockFrequencyInfo>()),
-        HSpiller(pass, mf, vrm) {}
+        HSpiller(pass, mf, vrm, StackSlotNeedToShrink) {}
 
   void spill(LiveRangeEdit &) override;
   void postOptimization() override;
@@ -233,6 +239,8 @@ private:
 
   void spillAroundUses(unsigned Reg);
   void spillAll();
+
+  void shrinkStackIntervalToUse(int StackSlot);
 };
 
 } // end anonymous namespace
@@ -391,11 +399,7 @@ bool InlineSpiller::hoistSpillInsideBB(LiveInterval &SpillLI,
   // value. We may be able to do better with stack slot coloring by being more
   // careful here.
   assert(StackInt && "No stack slot assigned yet.");
-  LiveInterval &OrigLI = LIS.getInterval(Original);
-  VNInfo *OrigVNI = OrigLI.getVNInfoAt(Idx);
-  StackInt->MergeValueInAsValue(OrigLI, OrigVNI, StackInt->getValNumInfo(0));
-  LLVM_DEBUG(dbgs() << "\tmerged orig valno " << OrigVNI->id << ": "
-                    << *StackInt << '\n');
+  StackSlotNeedToShrink.insert(StackSlot);
 
   // We are going to spill SrcVNI immediately after its def, so clear out
   // any later spills of the same value.
@@ -442,9 +446,8 @@ void InlineSpiller::eliminateRedundantSpills(LiveInterval &SLI, VNInfo *VNI) {
     if (isRegToSpill(Reg))
       continue;
 
-    // Add all of VNI's live range to StackInt.
-    StackInt->MergeValueInAsValue(*LI, VNI, StackInt->getValNumInfo(0));
-    LLVM_DEBUG(dbgs() << "Merged to stack int: " << *StackInt << '\n');
+    // Mark StackSlot to shrink.
+    StackSlotNeedToShrink.insert(StackSlot);
 
     // Find all spills and copies of VNI.
     for (MachineRegisterInfo::use_instr_nodbg_iterator
@@ -1073,6 +1076,9 @@ void InlineSpiller::spillAll() {
   if (Original != Edit->getReg())
     VRM.assignVirt2StackSlot(Edit->getReg(), StackSlot);
 
+  if (MRI.isStatepointObserved(Original))
+    MF.getFrameInfo().markAsStatepointSpillSlotObjectIndex(StackSlot);
+
   assert(StackInt->getNumValNums() == 1 && "Bad stack interval values");
   for (unsigned Reg : RegsToSpill)
     StackInt->MergeSegmentsInAsValue(LIS.getInterval(Reg),
@@ -1136,7 +1142,77 @@ void InlineSpiller::spill(LiveRangeEdit &edit) {
 }
 
 /// Optimizations after all the reg selections and spills are done.
-void InlineSpiller::postOptimization() { HSpiller.hoistAllSpills(); }
+void InlineSpiller::postOptimization() {
+  HSpiller.hoistAllSpills();
+  for (int StackSlot : StackSlotNeedToShrink) {
+    shrinkStackIntervalToUse(StackSlot);
+  }
+}
+
+void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
+  LiveInterval &StackIntvl = LSS.getInterval(Slot);
+  SmallVector<SlotIndex, 8> WorkList;
+  LiveRange NewLR;
+  VNInfo *VNI = StackIntvl.getValNumInfo(0);
+  SlotIndexes *Indexes = LIS.getSlotIndexes();
+
+  auto ScanFIToBuildWorkList = [&]() {
+    for (MachineFunction::iterator MBBI = MF.begin(), E = MF.end(); MBBI != E;
+         ++MBBI) {
+      MachineBasicBlock *MBB = &*MBBI;
+      for (MachineBasicBlock::iterator MII = MBB->begin(), EE = MBB->end();
+           MII != EE; ++MII) {
+        MachineInstr &MI = *MII;
+        if (MI.isKill())
+          continue;
+        for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
+          MachineOperand &MO = MI.getOperand(i);
+          if (!MO.isFI())
+            continue;
+          int FI = MO.getIndex();
+          if (FI != Slot)
+            continue;
+          SlotIndex Idx = Indexes->getInstructionIndex(MI);
+          if (TII.isStoreToStackSlot(MI, FI)) {
+            // It's a def.
+            NewLR.addSegment(LiveRange::Segment(Idx, Idx.getDeadSlot(), VNI));
+            continue;
+          }
+          // It's a use.
+          WorkList.emplace_back(Idx);
+        }
+      }
+    }
+  };
+
+  auto ExtendSegmentsToUses = [&]() {
+    SmallPtrSet<const MachineBasicBlock *, 16> LiveOut;
+
+    while (!WorkList.empty()) {
+      SlotIndex Idx = WorkList.back();
+      WorkList.pop_back();
+
+      const MachineBasicBlock *MBB =
+          Indexes->getMBBFromIndex(Idx.getPrevSlot());
+      SlotIndex BlockStart = Indexes->getMBBStartIdx(MBB);
+      if (NewLR.extendInBlock(BlockStart, Idx)) {
+        continue;
+      }
+      // VNI is live-in to MBB.
+      NewLR.addSegment(LiveRange::Segment(BlockStart, Idx, VNI));
+      // Make sure VNI is live-out from the predecessors.
+      for (const MachineBasicBlock *Pred : MBB->predecessors()) {
+        if (!LiveOut.insert(Pred).second)
+          continue;
+        SlotIndex Stop = Indexes->getMBBEndIdx(Pred);
+        WorkList.emplace_back(Stop);
+      }
+    }
+  };
+  ScanFIToBuildWorkList();
+  ExtendSegmentsToUses();
+  StackIntvl.segments.swap(NewLR.segments);
+}
 
 /// When a spill is inserted, add the spill to MergeableSpills map.
 void HoistSpillHelper::addToMergeableSpills(MachineInstr &Spill, int StackSlot,
@@ -1499,10 +1575,9 @@ void HoistSpillHelper::hoistAllSpills() {
     });
 
     // Stack live range update.
-    LiveInterval &StackIntvl = LSS.getInterval(Slot);
-    if (!SpillsToIns.empty() || !SpillsToRm.empty())
-      StackIntvl.MergeValueInAsValue(OrigLI, OrigVNI,
-                                     StackIntvl.getValNumInfo(0));
+    if (!SpillsToIns.empty() || !SpillsToRm.empty()) {
+      StackSlotNeedToShrink.insert(Slot);
+    }
 
     // Insert hoisted spills.
     for (auto const &Insert : SpillsToIns) {
