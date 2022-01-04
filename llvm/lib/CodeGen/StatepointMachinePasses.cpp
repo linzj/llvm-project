@@ -15,6 +15,7 @@
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveStacks.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -83,9 +84,10 @@ private:
   bool rewriteStatepoint(MachineFunction &, MachineInstr *MI);
 
   SmallVector<Register, 8> ObservedRegistersWithPhys;
-  SmallVector<Register, 8> ObservedRegistersWithoutPhys;
+  SmallVector<int, 8> ObservedStackSlots;
   SlotIndexes *Indexes;
   LiveIntervals *LIS;
+  LiveStacks *LSS;
   VirtRegMap *VRM;
   MachineRegisterInfo *MRI;
 };
@@ -201,7 +203,7 @@ INITIALIZE_PASS_END(StatepointRewrite, DEBUG_TYPE, "Rewrite Statepoints PostRA",
                     false, false)
 
 StatepointRewrite::StatepointRewrite()
-    : MachineFunctionPass(ID), Indexes(nullptr), VRM(nullptr) {
+    : MachineFunctionPass(ID), Indexes(nullptr), LSS(nullptr), VRM(nullptr) {
   PassRegistry &Registry = *PassRegistry::getPassRegistry();
   initializeStatepointRewritePass(Registry);
 }
@@ -218,6 +220,7 @@ void StatepointRewrite::getAnalysisUsage(AnalysisUsage &AU) const {
 bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
   Indexes = &getAnalysis<SlotIndexesWrapperPass>().getSI();
   LIS = &getAnalysis<LiveIntervalsWrapperPass>().getLIS();
+  LSS = &getAnalysis<LiveStacksWrapperLegacy>().getLS();
   VRM = &getAnalysis<VirtRegMapWrapperLegacy>().getVRM();
   MRI = &MF.getRegInfo();
   return rewriteStatepoints(MF);
@@ -227,17 +230,14 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   bool Changed = false;
   SmallVector<MachineInstr *, 8> WorkList;
 
-  auto ObservedRegisters = MRI->getStatePointObservedActiveRegs();
-
   // Setup observed registers lists.
-  ObservedRegistersWithPhys.clear();
-  ObservedRegistersWithoutPhys.clear();
+  ObservedRegistersWithPhys = MRI->getStatePointObservedActiveRegs();
 
-  for (Register Reg : ObservedRegisters) {
-    if (!VRM->hasPhys(Reg))
-      ObservedRegistersWithoutPhys.emplace_back(Reg);
-    else
-      ObservedRegistersWithPhys.emplace_back(Reg);
+  ObservedStackSlots.clear();
+  MachineFrameInfo *MFI = &MF.getFrameInfo();
+  for (int i = 0, e = MFI->getObjectIndexEnd(); i != e; ++i) {
+    if (MFI->isStatepointSpillSlotObjectIndex(i))
+      ObservedStackSlots.emplace_back(i);
   }
 
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
@@ -270,6 +270,7 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     llvm_unreachable("unexpected stackmap opcode");
   }
   MachineRegisterInfo *MRI = &MF.getRegInfo();
+  MachineFrameInfo *MFI = &MF.getFrameInfo();
   // Ready to rebuild the StatePoint.
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   const TargetInstrInfo *TII = STI.getInstrInfo();
@@ -285,18 +286,14 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
   Index = Index.getNextSlot();
   DenseSet<int> RecordedStackSlot;
 
-  auto AddStackSlot = [&](Register Reg) {
-    assert(LIS->hasInterval(Reg));
-    LiveInterval &Interval = LIS->getInterval(Reg);
+  auto AddStackSlot = [&](int StackSlot) {
+    LiveInterval &Interval = LSS->getInterval(StackSlot);
     if (!Interval.liveAt(Index))
-      return;
-    int StackSlot = VRM->getStackSlot(VRM->getOriginal(Reg));
-    if (StackSlot == VirtRegMap::NO_STACK_SLOT)
       return;
     if (!RecordedStackSlot.insert(StackSlot).second)
       return;
     // Add the Stack Slot Info.
-    int SpillSize = TRI->getSpillSize(*MRI->getRegClass(Reg));
+    int SpillSize = MFI->getObjectSize(StackSlot);
     MIB.addImm(StackMaps::IndirectMemRefOp);
     MIB.addImm(SpillSize);
     MIB.addFrameIndex(StackSlot);
@@ -313,8 +310,8 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
   };
 
   // Add Stack Slots
-  for (Register Reg : ObservedRegistersWithoutPhys) {
-    AddStackSlot(Reg);
+  for (int StackSlot : ObservedStackSlots) {
+    AddStackSlot(StackSlot);
   }
 
   for (Register r : ObservedRegistersWithPhys) {
