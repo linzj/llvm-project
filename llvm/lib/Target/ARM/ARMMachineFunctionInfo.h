@@ -131,6 +131,9 @@ class ARMFunctionInfo : public MachineFunctionInfo {
 
   /// The amount the literal pool has been increasedby due to promoted globals.
   int PromotedGlobalsIncrease = 0;
+  int D8CheckSpaceFrameIndex = 0;
+  int D9CheckSpaceFrameIndex = 0;
+  int R0StoreSpaceFrameIndex = 0;
 
   /// V8/Dart
   mutable int LastSPAdjust = 0;
@@ -265,6 +268,24 @@ public:
   }
   void setPromotedConstpoolIncrease(int Sz) {
     PromotedGlobalsIncrease = Sz;
+  }
+  int getD8CheckSpaceFrameIndex() const {
+    return D8CheckSpaceFrameIndex;
+  }
+  void setD8CheckSpaceFrameIndex(int D8FI) {
+    D8CheckSpaceFrameIndex = D8FI;
+  }
+  int getD9CheckSpaceFrameIndex() const {
+    return D9CheckSpaceFrameIndex;
+  }
+  void setD9CheckSpaceFrameIndex(int D9FI) {
+    D9CheckSpaceFrameIndex = D9FI;
+  }
+  int getR0StoreSpaceFrameIndex() const {
+    return R0StoreSpaceFrameIndex;
+  }
+  void setR0StoreSpaceFrameIndex(int R0FI) {
+    R0StoreSpaceFrameIndex = R0FI;
   }
   /// V8/Dart
   bool isJSFunction() const { return IsJSFunction; }

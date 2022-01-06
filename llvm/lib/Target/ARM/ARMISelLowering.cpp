@@ -17646,4 +17646,14 @@ void ARMTargetLowering::insertCopiesSplitCSR(
 void ARMTargetLowering::finalizeLowering(MachineFunction &MF) const {
   MF.getFrameInfo().computeMaxCallFrameSize(MF);
   TargetLoweringBase::finalizeLowering(MF);
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  if (MFI.hasCalls() && Subtarget->hasNEON()) {
+    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+    int D8CheckSpaceFrameIndex = MFI.CreateSpillStackObject(8, 4);
+    int D9CheckSpaceFrameIndex = MFI.CreateSpillStackObject(8, 4);
+    AFI->setD8CheckSpaceFrameIndex(D8CheckSpaceFrameIndex);
+    AFI->setD9CheckSpaceFrameIndex(D9CheckSpaceFrameIndex);
+    int R0StoreSpaceFrameIndex = MFI.CreateSpillStackObject(4, 4);
+    AFI->setR0StoreSpaceFrameIndex(R0StoreSpaceFrameIndex);
+  }
 }

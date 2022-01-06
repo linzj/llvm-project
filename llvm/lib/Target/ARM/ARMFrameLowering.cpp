@@ -2224,6 +2224,27 @@ void ARMFrameLowering::getCalleeSaves(const MachineFunction &MF,
     SavedRegs.set(ARM::R0);
 }
 
+static void BuildCheckSReg(unsigned SReg, MachineBasicBlock &MBB,
+                           MachineBasicBlock::iterator I, const DebugLoc &dl,
+                           const ARMBaseInstrInfo &TII, bool Thumb) {
+  BuildMI(MBB, I, dl, TII.get(ARM::VMOVRS), ARM::R12)
+      .addReg(SReg)
+      .add(predOps(ARMCC::AL));
+  if (!Thumb) {
+    BuildMI(MBB, I, dl, TII.get(ARM::ANDrr), ARM::R0)
+        .addReg(ARM::R0)
+        .addReg(ARM::R12)
+        .add(predOps(ARMCC::AL))
+        .add(condCodeOp());
+  } else {
+    BuildMI(MBB, I, dl, TII.get(ARM::t2ANDrr), ARM::R0)
+        .addReg(ARM::R0)
+        .addReg(ARM::R12)
+        .add(predOps(ARMCC::AL))
+        .add(condCodeOp());
+  }
+}
+
 MachineBasicBlock::iterator ARMFrameLowering::eliminateCallFramePseudoInstr(
     MachineFunction &MF, MachineBasicBlock &MBB,
     MachineBasicBlock::iterator I) const {
@@ -2265,6 +2286,94 @@ MachineBasicBlock::iterator ARMFrameLowering::eliminateCallFramePseudoInstr(
       }
     }
   }
+  if (STI.hasNEON() && (I->getOpcode() == ARM::ADJCALLSTACKUP)) {
+    // find the BL family;
+    MachineBasicBlock::iterator finder = I;
+    --finder;
+    for (; finder != MBB.begin(); --finder) {
+      MachineInstr &MI = *finder;
+      if (MI.isCall()) {
+        break;
+      }
+    }
+    if (finder == MBB.begin()) {
+      MachineInstr &MI = *finder;
+      if (!MI.isCall()) {
+        goto end;
+      }
+    }
+    {
+      MachineBasicBlock::iterator CheckI = finder;
+      --CheckI;
+      MachineInstr &CheckMI = *CheckI;
+      if (CheckMI.getOpcode() == ARM::VSTRD) {
+        if (CheckMI.getOperand(0).getReg() == ARM::D8)
+          goto end;
+        if (CheckMI.getOperand(0).getReg() == ARM::D9)
+          goto end;
+      }
+    }
+    DebugLoc dl = finder->getDebugLoc();
+    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+    // insert before call
+    BuildMI(MBB, finder, dl, TII.get(ARM::VSTRD))
+        .addReg(ARM::D8)
+        .addFrameIndex(AFI->getD8CheckSpaceFrameIndex())
+        .addImm(0)
+        .add(predOps(ARMCC::AL));
+    BuildMI(MBB, finder, dl, TII.get(ARM::VSTRD))
+        .addReg(ARM::D9)
+        .addFrameIndex(AFI->getD9CheckSpaceFrameIndex())
+        .addImm(0)
+        .add(predOps(ARMCC::AL));
+    // insert after call
+    ++finder;
+    bool Thumb = STI.isThumb();
+    auto &StrOpc = Thumb ? TII.get(ARM::t2STRi12) : TII.get(ARM::STRi12);
+    auto &LdrOpc = Thumb ? TII.get(ARM::t2LDRi12) : TII.get(ARM::LDRi12);
+
+    BuildMI(MBB, finder, dl, TII.get(ARM::VLDRD), ARM::D6)
+        .addFrameIndex(AFI->getD8CheckSpaceFrameIndex())
+        .addImm(0)
+        .add(predOps(ARMCC::AL));
+    BuildMI(MBB, finder, dl, TII.get(ARM::VLDRD), ARM::D7)
+        .addFrameIndex(AFI->getD9CheckSpaceFrameIndex())
+        .addImm(0)
+        .add(predOps(ARMCC::AL));
+    BuildMI(MBB, finder, dl, TII.get(ARM::VCEQv4i32), ARM::Q3)
+        .addReg(ARM::Q4)
+        .addReg(ARM::Q3)
+        .add(predOps(ARMCC::AL));
+    BuildMI(MBB, finder, dl, StrOpc)
+        .addReg(ARM::R0)
+        .addFrameIndex(AFI->getR0StoreSpaceFrameIndex())
+        .addImm(0)
+        .add(predOps(ARMCC::AL));
+    if (!Thumb) {
+      BuildMI(MBB, finder, dl, TII.get(ARM::ADDri), ARM::R0)
+          .addFrameIndex(AFI->getR0StoreSpaceFrameIndex())
+          .addImm(0)
+          .add(predOps(ARMCC::AL))
+          .add(condCodeOp());
+    } else {
+      BuildMI(MBB, finder, dl, TII.get(ARM::t2ADDri), ARM::R0)
+          .addFrameIndex(AFI->getR0StoreSpaceFrameIndex())
+          .addImm(0)
+          .add(predOps(ARMCC::AL))
+          .add(condCodeOp());
+    }
+
+    BuildCheckSReg(ARM::S12, MBB, finder, dl, TII, Thumb);
+    BuildCheckSReg(ARM::S13, MBB, finder, dl, TII, Thumb);
+    BuildCheckSReg(ARM::S14, MBB, finder, dl, TII, Thumb);
+    BuildCheckSReg(ARM::S15, MBB, finder, dl, TII, Thumb);
+
+    BuildMI(MBB, finder, dl, LdrOpc, ARM::R0)
+        .addReg(ARM::R0)
+        .addImm(0)
+        .add(predOps(ARMCC::AL));
+  }
+end:
   return MBB.erase(I);
 }
 
