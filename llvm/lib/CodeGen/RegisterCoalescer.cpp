@@ -2347,8 +2347,7 @@ bool RegisterCoalescer::joinCopy(
 
   MRI->updateJoinCopy(CP.getSrcReg(), CP.getDstReg());
 
-  if (Register::isVirtualRegister(CP.getDstReg()))
-    MRI->syncStatepointObserved(CP.getSrcReg(), CP.getDstReg());
+  MRI->syncStatepointObserved(CP.getSrcReg(), CP.getDstReg());
 
   LLVM_DEBUG({
     dbgs() << "\tSuccess: " << printReg(CP.getSrcReg(), TRI, CP.getSrcIdx())

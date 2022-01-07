@@ -1271,6 +1271,8 @@ public:
   }
 
   void syncStatepointObserved(Register Old, Register New) {
+    if (!Register::isVirtualRegister(New))
+      return;
     if (isStatepointObserved(Old))
       addStatepointObserved(New);
   }
