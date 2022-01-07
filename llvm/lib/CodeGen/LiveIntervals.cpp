@@ -180,19 +180,6 @@ void LiveIntervals::analyze(MachineFunction &fn) {
     for (MCRegUnit Unit : TRI->regunits())
       getRegUnit(Unit);
   }
-
-  // Initialize V8CC Pointer PhysReg.
-  NotV8CCPointers.clear();
-  if (IsV8CC) {
-    NotV8CCPointers.resize(TRI->getNumRegs(), true);
-    const TargetRegisterClass *PointerRegClass = TRI->getPointerRegClass();
-    for (MCPhysReg Reg : PointerRegClass->getRegisters()) {
-      for (MCSubRegIterator SubReg(Reg, TRI, true); SubReg.isValid();
-           ++SubReg) {
-        NotV8CCPointers.reset(*SubReg);
-      }
-    }
-  }
 }
 
 void LiveIntervals::print(raw_ostream &OS) const {
@@ -997,6 +984,31 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
     return false;
 
   bool Found = false;
+  // Exclude registers preserved by interfering statepoint calls: such a call
+  // saves them as CSRs and the stackmap marker would observe the values on
+  // the stack.
+  // FIXME:(zuojian) Maybe I should check the loop, and starts from the SlotI.
+  if (IsV8CC && !MRI->isStatepointObserved(LI.reg())) {
+    for (auto SlotI = Slots.begin(); SlotI != SlotE; ++SlotI) {
+      MachineInstr *MI = Indexes->getInstructionFromIndex(*SlotI);
+      if (MI->getOpcode() == TargetOpcode::STATEPOINT) {
+        StatepointOpers Op(MI);
+        const int64_t Flags = MI->getOperand(Op.getFlagsIdx()).getImm();
+        if (Flags &
+            static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged)) {
+          if (!Found) {
+            UsableRegs.clear();
+            UsableRegs.resize(TRI->getNumRegs(), true);
+            Found = true;
+          }
+          UsableRegs.clearBitsInMask(Bits[SlotI - Slots.begin()]);
+          LLVM_DEBUG(dbgs() << "Apply interference for reg: "
+                            << printReg(LI.reg(), TRI) << "\n");
+        }
+      }
+    }
+  }
+
   // Utility to union regmasks.
   auto unionBitMask = [&](unsigned Idx) {
       if (!Found) {
@@ -1007,18 +1019,6 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
       }
       // Remove usable registers clobbered by this mask.
       UsableRegs.clearBitsNotInMask(Bits[Idx]);
-      // Remove usable registers are pointers if the CSRInterferesNonTagged
-      // flag is set on the statepoint.
-      if (IsV8CC && !MRI->isStatepointObserved(LI.reg())) {
-        MachineInstr *MI = Indexes->getInstructionFromIndex(Slots[Idx]);
-        if (MI->getOpcode() == TargetOpcode::STATEPOINT) {
-          StatepointOpers Op(MI);
-          const int64_t Flags = MI->getOperand(Op.getFlagsIdx()).getImm();
-          if (Flags &
-              static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged))
-            UsableRegs &= NotV8CCPointers;
-        }
-      }
   };
   while (true) {
     assert(*SlotI >= LiveI->start);

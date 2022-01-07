@@ -98,8 +98,6 @@ class LiveIntervals {
   /// interference.
   SmallVector<LiveRange *, 0> RegUnitRanges;
 
-  /// Track PhysRegs can be use a pointer and their sub reg.
-  BitVector NotV8CCPointers;
   /// Track if current function using v8cc.
   bool IsV8CC;
 
