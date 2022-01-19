@@ -974,6 +974,34 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
     Bits = getRegMaskBits();
   }
 
+  bool Found = false;
+  // Remove usable registers are pointers if InterferenceWithNonTagged flag
+  // is set.
+  // FIXME:(zuojian) Maybe I should check the loop, and starts from the SlotI.
+  if (IsV8CC && !MRI->isStatepointObserved(LI.reg())) {
+    ArrayRef<SlotIndex> Slots = getRegMaskSlots();
+    ArrayRef<const uint32_t *> Bits = getRegMaskBits();
+    for (auto SlotI = Slots.begin(), SlotE = Slots.end(); SlotI != SlotE;
+         ++SlotI) {
+      const SlotIndex &Index = *SlotI;
+      MachineInstr *MI = Indexes->getInstructionFromIndex(Index);
+      // MI maybe nullptr for Bits may come from MBB's BeginClobberMask.
+      if (MI && MI->getOpcode() == TargetOpcode::STATEPOINT) {
+        StatepointOpers Op(MI);
+        const int64_t Flags = MI->getOperand(Op.getFlagsIdx()).getImm();
+        if (Flags &
+            static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged)) {
+          UsableRegs.clear();
+          UsableRegs.resize(TRI->getNumRegs(), true);
+          Found = true;
+          UsableRegs.clearBitsInMask(Bits[SlotI - Slots.begin()]);
+          LLVM_DEBUG(dbgs() << "Apply interference for reg: "
+                            << printReg(LI.reg(), TRI) << "\n");
+        }
+      }
+    }
+  }
+
   // We are going to enumerate all the register mask slots contained in LI.
   // Start with a binary search of RegMaskSlots to find a starting point.
   ArrayRef<SlotIndex>::iterator SlotI = llvm::lower_bound(Slots, LiveI->start);
@@ -982,32 +1010,6 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
   // No slots in range, LI begins after the last call.
   if (SlotI == SlotE)
     return false;
-
-  bool Found = false;
-  // Exclude registers preserved by interfering statepoint calls: such a call
-  // saves them as CSRs and the stackmap marker would observe the values on
-  // the stack.
-  // FIXME:(zuojian) Maybe I should check the loop, and starts from the SlotI.
-  if (IsV8CC && !MRI->isStatepointObserved(LI.reg())) {
-    for (auto SlotI = Slots.begin(); SlotI != SlotE; ++SlotI) {
-      MachineInstr *MI = Indexes->getInstructionFromIndex(*SlotI);
-      if (MI->getOpcode() == TargetOpcode::STATEPOINT) {
-        StatepointOpers Op(MI);
-        const int64_t Flags = MI->getOperand(Op.getFlagsIdx()).getImm();
-        if (Flags &
-            static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged)) {
-          if (!Found) {
-            UsableRegs.clear();
-            UsableRegs.resize(TRI->getNumRegs(), true);
-            Found = true;
-          }
-          UsableRegs.clearBitsInMask(Bits[SlotI - Slots.begin()]);
-          LLVM_DEBUG(dbgs() << "Apply interference for reg: "
-                            << printReg(LI.reg(), TRI) << "\n");
-        }
-      }
-    }
-  }
 
   // Utility to union regmasks.
   auto unionBitMask = [&](unsigned Idx) {
