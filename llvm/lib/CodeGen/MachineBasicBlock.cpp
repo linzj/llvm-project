@@ -1481,6 +1481,9 @@ MachineBasicBlock::computeRegisterLiveness(const TargetRegisterInfo *TRI,
 
 const uint32_t *
 MachineBasicBlock::getBeginClobberMask(const TargetRegisterInfo *TRI) const {
+  if (isEHPad() &&
+      getParent()->getFunction().getCallingConv() == CallingConv::V8CC)
+    return TRI->getNoPreservedMask();
   // EH funclet entry does not preserve any registers.
   return isEHFuncletEntry() ? TRI->getNoPreservedMask() : nullptr;
 }
