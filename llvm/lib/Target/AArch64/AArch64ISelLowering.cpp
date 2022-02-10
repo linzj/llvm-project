@@ -4590,6 +4590,23 @@ SDValue AArch64TargetLowering::LowerGlobalAddress(SDValue Op,
   if (OpFlags != AArch64II::MO_NO_FLAG)
     assert(cast<GlobalAddressSDNode>(Op)->getOffset() == 0 &&
            "unexpected offset in global node");
+  if (Subtarget->getTargetTriple().getEnvironment() == Triple::Dart) {
+    // Handle dart global address lowering.
+    SDLoc DL(GN);
+    EVT PtrVT = getPointerTy(DAG.getDataLayout());
+    SDValue PP = DAG.getRegister(AArch64::X27, PtrVT);
+    const uint64_t Offset = strtoull(GV->getName().str().c_str(), nullptr, 16);
+    if (Offset) {
+      SDValue OffsetNode = DAG.getConstant(Offset, DL, PtrVT);
+      SDValue Addr = DAG.getNode(ISD::ADD, DL, PtrVT, PP, OffsetNode);
+      SDValue Load = DAG.getLoad(PtrVT, DL, DAG.getEntryNode(), Addr,
+                                 MachinePointerInfo());
+      SDValue Result =
+          DAG.getNode(ISD::SUB, DL, PtrVT, Load, DAG.getConstant(1, DL, PtrVT));
+      return Result;
+    }
+    // Fallback to default handling.
+  }
 
   // This also catches the large code model case for Darwin, and tiny code
   // model with got relocations.

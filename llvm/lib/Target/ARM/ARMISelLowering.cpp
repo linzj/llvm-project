@@ -3575,6 +3575,26 @@ bool ARMTargetLowering::isReadOnly(const GlobalValue *GV) const {
 
 SDValue ARMTargetLowering::LowerGlobalAddress(SDValue Op,
                                               SelectionDAG &DAG) const {
+  if (Subtarget->getTargetTriple().getEnvironment() == Triple::Dart) {
+    // Handle dart global address lowering.
+    GlobalAddressSDNode *GN = cast<GlobalAddressSDNode>(Op);
+    const GlobalValue *GV = GN->getGlobal();
+    SDLoc DL(GN);
+    EVT PtrVT = getPointerTy(DAG.getDataLayout());
+    SDValue PP = DAG.getRegister(ARM::R5, PtrVT);
+    const uint64_t Offset = strtoull(GV->getName().str().c_str(), nullptr, 16);
+    if (Offset) {
+      // -1 for heap object tag.
+      SDValue OffsetNode = DAG.getConstant(Offset - 1, DL, PtrVT);
+      SDValue Addr = DAG.getNode(ISD::ADD, DL, PtrVT, PP, OffsetNode);
+      SDValue Load = DAG.getLoad(PtrVT, DL, DAG.getEntryNode(), Addr,
+                                 MachinePointerInfo());
+      SDValue Result =
+          DAG.getNode(ISD::SUB, DL, PtrVT, Load, DAG.getConstant(1, DL, PtrVT));
+      return Result;
+    }
+    // Fallback to default handling.
+  }
   switch (Subtarget->getTargetTriple().getObjectFormat()) {
   default: llvm_unreachable("unknown object format");
   case Triple::COFF:

@@ -1170,8 +1170,8 @@ public:
   };
 
   void addStatepointObserved(Register r) {
-    assert(Register::isVirtualRegister(r));
-    StatepointObserved.insert(r);
+    if (Register::isVirtualRegister(r))
+      StatepointObserved.insert(r);
   }
 
   bool isStatepointObserved(Register r) {
