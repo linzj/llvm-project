@@ -659,6 +659,12 @@ void VirtRegRewriter::rewrite() {
   for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
        MBBI != MBBE; ++MBBI) {
     LLVM_DEBUG(MBBI->print(dbgs(), Indexes));
+
+    // Need consider block clobber here.
+    if (const uint32_t *Mask = MBBI->getBeginClobberMask(TRI)) {
+      MRI->addPhysRegsUsedFromRegMask(Mask);
+    }
+
     for (MachineInstr &MI : llvm::make_early_inc_range(MBBI->instrs())) {
       for (MachineOperand &MO : MI.operands()) {
         // Make sure MRI knows about registers clobbered by regmasks.
