@@ -152,6 +152,18 @@ bool LiveIntervals::runOnMachineFunction(MachineFunction &fn) {
       getRegUnit(i);
   }
   LLVM_DEBUG(dump());
+  // Initialize V8CC Pointer PhysReg.
+  NotV8CCPointers.clear();
+  if (IsV8CC) {
+    NotV8CCPointers.resize(TRI->getNumRegs(), true);
+    const TargetRegisterClass *PointerRegClass = TRI->getPointerRegClass(fn);
+    for (MCPhysReg Reg : PointerRegClass->getRegisters()) {
+      for (MCSubRegIterator SubReg(Reg, TRI, true); SubReg.isValid();
+           ++SubReg) {
+        NotV8CCPointers.reset(*SubReg);
+      }
+    }
+  }
 
   return true;
 }
@@ -933,14 +945,21 @@ bool LiveIntervals::checkRegMaskInterference(LiveInterval &LI,
                 .getImm();
         if (flags &
             static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged)) {
-          UsableRegs.clear();
-          UsableRegs.resize(TRI->getNumRegs(), true);
-          Found = true;
+          if (!Found) {
+            UsableRegs.clear();
+            UsableRegs.resize(TRI->getNumRegs(), true);
+            Found = true;
+          }
           UsableRegs.clearBitsInMask(Bits[SlotI - Slots.begin()]);
           LLVM_DEBUG(dbgs() << "Apply interference for reg: "
                             << printReg(LI.reg, TRI) << "\n");
         }
       }
+    }
+
+    if (Found) {
+      // Restore the non pointer bits.
+      UsableRegs |= NotV8CCPointers;
     }
   }
 
