@@ -547,4 +547,4 @@ def CC_AArch64_V8 : CallingConv<[
            CCAssignToStack<16, 16>>
 ]>;
 
-def CSR_AArch64_V8 : CalleeSavedRegs<(add LR, FP, X26)>;
+def CSR_AArch64_V8 : CalleeSavedRegs<(add LR, FP)>;

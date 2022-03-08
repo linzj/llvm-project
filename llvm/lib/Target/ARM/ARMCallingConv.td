@@ -328,7 +328,7 @@ def CSR_AAPCS : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, R4,
 // AAPCS, and also preserves all floating point registers.
 def CSR_Win_AAPCS_CFGuard_Check : CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7,
                                      R6, R5, R4, (sequence "D%u", 15, 0))>;
-def CSR_V8CC : CalleeSavedRegs<(add LR, R11, R10)>;
+def CSR_V8CC : CalleeSavedRegs<(add LR, R11)>;
 
 def CSR_V8FPSave: CalleeSavedRegs<(add LR, R11, R10, R9, R8, R7, R6, R5, R4,
                                      (sequence "D%u", 31, 0))>;
