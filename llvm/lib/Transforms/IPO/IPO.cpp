@@ -141,8 +141,3 @@ void LLVMAddStripDeadPrototypesPass(LLVMPassManagerRef PM) {
 void LLVMAddStripSymbolsPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createStripSymbolsPass());
 }
-#endif
-
-void LLVMAddFunctionInliningPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createFunctionInliningPass());
-}

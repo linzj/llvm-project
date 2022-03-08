@@ -4114,7 +4114,7 @@ LLVMBool LLVMIsMultithreaded() { return llvm_is_multithreaded(); }
 
 void LLVMSplitModule(LLVMModuleRef M, unsigned N,
                      void (*CallBack)(LLVMModuleRef, void *), void *data,
-                     bool PreserveLocals) {
+                     LLVMBool PreserveLocals) {
   SplitModule(
       std::unique_ptr<Module>(unwrap(M)), N,
       [CallBack, data](std::unique_ptr<Module> MPart) {
