@@ -2937,19 +2937,27 @@ static bool insertParsePoints(Function &F, DominatorTree &DT,
 
   Holders.clear();
 
+  // Compress pointer feature in V8/Dart will use a compress pointer as index.
+  // We should not rematerialize them, they are variant.
+  bool ShouldRemat = F.getCallingConv() != CallingConv::V8CC;
+
   // Compute the cost of possible re-materialization of derived pointers.
   RematCandTy RematerizationCandidates;
-  findRematerializationCandidates(PointerToBase, RematerizationCandidates, TTI);
+  if (ShouldRemat)
+    findRematerializationCandidates(PointerToBase, RematerizationCandidates,
+                                    TTI);
 
   // In order to reduce live set of statepoint we might choose to rematerialize
   // some values instead of relocating them. This is purely an optimization and
   // does not influence correctness.
   // First try rematerialization at uses, then after statepoints.
-  rematerializeLiveValuesAtUses(RematerizationCandidates, Records,
-                                PointerToBase);
-  for (size_t i = 0; i < Records.size(); i++)
-    rematerializeLiveValues(ToUpdate[i], Records[i], PointerToBase,
-                            RematerizationCandidates, TTI);
+  if (ShouldRemat) {
+    rematerializeLiveValuesAtUses(RematerizationCandidates, Records,
+                                  PointerToBase);
+    for (size_t i = 0; i < Records.size(); i++)
+      rematerializeLiveValues(ToUpdate[i], Records[i], PointerToBase,
+                              RematerizationCandidates, TTI);
+  }
 
   // We need this to safely RAUW and delete call or invoke return values that
   // may themselves be live over a statepoint.  For details, please see usage in
