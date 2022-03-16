@@ -238,6 +238,9 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     markSuperRegs(Reserved, AArch64::W22);
     // reserve W15 for SP
     markSuperRegs(Reserved, AArch64::W15);
+#if defined(DART_TARGET_OS_MACOS_IOS) || defined(DART_TARGET_OS_MACOS)
+    markSuperRegs(Reserved, AArch64::W18);
+#endif
   }
   assert(checkAllSuperRegsMarked(Reserved));
   return Reserved;
