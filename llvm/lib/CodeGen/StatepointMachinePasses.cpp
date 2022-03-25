@@ -157,12 +157,10 @@ bool StatepointSimplify::removeVarFromStatepoints(MachineFunction &MF) {
 bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
                                                  MachineInstr *StatePoint) {
   unsigned StartIdx = 0;
-  uint64_t ID = 0;
   switch (StatePoint->getOpcode()) {
   case TargetOpcode::STATEPOINT: {
     StatepointOpers Op(StatePoint);
     StartIdx = Op.getVarIdx();
-    ID = Op.getID();
     int64_t NumDeoptArgs = StatePoint->getOperand(StartIdx + 5).getImm();
     StartIdx += 6 + NumDeoptArgs;
     break;
@@ -256,18 +254,6 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
 
 bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
                                           MachineInstr *StatePoint) {
-  unsigned StartIdx = 0;
-  uint64_t ID = 0;
-  switch (StatePoint->getOpcode()) {
-  case TargetOpcode::STATEPOINT: {
-    StatepointOpers Op(StatePoint);
-    StartIdx = Op.getVarIdx();
-    ID = Op.getID();
-    break;
-  }
-  default:
-    llvm_unreachable("unexpected stackmap opcode");
-  }
   MachineRegisterInfo *MRI = &MF.getRegInfo();
   MachineFrameInfo *MFI = &MF.getFrameInfo();
   // Ready to rebuild the StatePoint.
