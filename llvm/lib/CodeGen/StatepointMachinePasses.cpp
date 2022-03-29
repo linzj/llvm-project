@@ -90,14 +90,6 @@ private:
   VirtRegMap *VRM;
   MachineRegisterInfo *MRI;
 };
-
-static MachineInstr *getSingleDef(const MachineRegisterInfo &MRI,
-                                  unsigned Reg) {
-  if (!MRI.hasOneDef(Reg))
-    return nullptr;
-  auto defs_iterator = MRI.def_begin(Reg);
-  return defs_iterator->getParent();
-}
 } // end of anonymous namespace
 
 INITIALIZE_PASS(StatepointSimplify, DEBUG_TYPE, "Statepoint Simplify", false,
@@ -254,12 +246,10 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
 
 bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
                                           MachineInstr *StatePoint) {
-  MachineRegisterInfo *MRI = &MF.getRegInfo();
   MachineFrameInfo *MFI = &MF.getFrameInfo();
   // Ready to rebuild the StatePoint.
   const TargetSubtargetInfo &STI = MF.getSubtarget();
   const TargetInstrInfo *TII = STI.getInstrInfo();
-  const TargetRegisterInfo *TRI = MRI->getTargetRegisterInfo();
   MachineInstr *NewMI = MF.CreateMachineInstr(TII->get(StatePoint->getOpcode()),
                                               StatePoint->getDebugLoc(), true);
   MachineInstrBuilder MIB(MF, NewMI);
