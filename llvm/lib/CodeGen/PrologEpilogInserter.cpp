@@ -358,13 +358,19 @@ void PEI::calculateSaveRestoreBlocks(MachineFunction &MF) {
   // Use the points found by shrink-wrapping, if any.
   if (MFI.getSavePoint()) {
     SaveBlocks.push_back(MFI.getSavePoint());
-    assert(MFI.getRestorePoint() && "Both restore and save must be set");
     MachineBasicBlock *RestoreBlock = MFI.getRestorePoint();
     // If RestoreBlock does not have any successor and is not a return block
     // then the end point is unreachable and we do not need to insert any
     // epilogue.
-    if (!RestoreBlock->succ_empty() || RestoreBlock->isReturnBlock())
-      RestoreBlocks.push_back(RestoreBlock);
+    if (RestoreBlock) {
+      if (!RestoreBlock->succ_empty() || RestoreBlock->isReturnBlock())
+        RestoreBlocks.push_back(RestoreBlock);
+    } else {
+      for (MachineBasicBlock &MBB : MF) {
+        if (MBB.isReturnBlock() && !MBB.mustNotInFrame())
+          RestoreBlocks.push_back(&MBB);
+      }
+    }
     return;
   }
 

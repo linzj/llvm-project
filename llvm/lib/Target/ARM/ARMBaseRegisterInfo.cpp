@@ -808,8 +808,16 @@ ARMBaseRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
          "This eliminateFrameIndex does not support Thumb1!");
   int FrameIndex = MI.getOperand(FIOperandNum).getIndex();
   unsigned FrameReg;
+  int Offset;
 
-  int Offset = TFI->ResolveFrameIndexReference(MF, FrameIndex, FrameReg, SPAdj);
+  if (MBB.mustNotInFrame()) {
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    assert(MFI.isFixedObjectIndex(FrameIndex));
+    FrameReg = ARM::SP;
+    Offset = MFI.getObjectOffset(FrameIndex);
+  } else {
+    Offset = TFI->ResolveFrameIndexReference(MF, FrameIndex, FrameReg, SPAdj);
+  }
 
   // Special handling of dbg_value, stackmap and patchpoint instructions.
   if (MI.isDebugValue() || MI.getOpcode() == TargetOpcode::STACKMAP ||
