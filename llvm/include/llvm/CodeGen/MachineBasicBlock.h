@@ -227,6 +227,9 @@ private:
   /// Indicate that this basic block is the indirect dest of an INLINEASM_BR.
   bool IsInlineAsmBrIndirectTarget = false;
 
+  /// Indicate that this basic block must not inside frame.
+  bool MustNotInFrame = false;
+
   /// since getSymbol is a relatively heavy-weight operation, the symbol
   /// is only computed once and is cached.
   mutable MCSymbol *CachedMCSymbol = nullptr;
@@ -744,6 +747,10 @@ public:
 
   /// Returns true if it is legal to hoist instructions into this block.
   LLVM_ABI bool isLegalToHoistInto() const;
+
+  bool mustNotInFrame() const { return MustNotInFrame; }
+
+  void setMustNotInFrame(bool V = true) { MustNotInFrame = V; }
 
   // Code Layout methods.
 

@@ -1097,6 +1097,10 @@ bool AArch64RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     FrameReg = AArch64::SP;
     Offset = StackOffset::getFixed(MFI.getObjectOffset(FrameIndex) +
                                    (int64_t)MFI.getStackSize());
+  } else if (MBB.mustNotInFrame()) {
+    assert(MFI.isFixedObjectIndex(FrameIndex));
+    FrameReg = AArch64::SP;
+    Offset = StackOffset::getFixed(MFI.getObjectOffset(FrameIndex));
   } else {
     Offset = TFI->resolveFrameIndexReference(
         MF, FrameIndex, FrameReg, /*PreferFP=*/false, /*ForSimm=*/true);

@@ -426,15 +426,23 @@ void PEIImpl::calculateSaveRestoreBlocks(MachineFunction &MF) {
            "Multiple save points are not yet supported!");
     const auto &SavePoint = *MFI.getSavePoints().begin();
     SaveBlocks.push_back(SavePoint.first);
-    assert(MFI.getRestorePoints().size() == 1 &&
+    assert(MFI.getRestorePoints().size() <= 1 &&
            "Multiple restore points are not yet supported!");
-    const auto &RestorePoint = *MFI.getRestorePoints().begin();
-    MachineBasicBlock *RestoreBlock = RestorePoint.first;
+    MachineBasicBlock *RestoreBlock = nullptr;
+    if (!MFI.getRestorePoints().empty())
+      RestoreBlock = MFI.getRestorePoints().begin()->first;
     // If RestoreBlock does not have any successor and is not a return block
     // then the end point is unreachable and we do not need to insert any
     // epilogue.
-    if (!RestoreBlock->succ_empty() || RestoreBlock->isReturnBlock())
-      RestoreBlocks.push_back(RestoreBlock);
+    if (RestoreBlock) {
+      if (!RestoreBlock->succ_empty() || RestoreBlock->isReturnBlock())
+        RestoreBlocks.push_back(RestoreBlock);
+    } else {
+      for (MachineBasicBlock &MBB : MF) {
+        if (MBB.isReturnBlock() && !MBB.mustNotInFrame())
+          RestoreBlocks.push_back(&MBB);
+      }
+    }
     return;
   }
 

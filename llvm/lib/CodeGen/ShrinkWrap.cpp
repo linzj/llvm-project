@@ -137,6 +137,8 @@ class ShrinkWrapImpl {
 
   // Emit remarks.
   MachineOptimizationRemarkEmitter *ORE = nullptr;
+  // Machine Frame Info.
+  MachineFrameInfo *MFI = nullptr;
 
   /// Frequency of the Entry block.
   BlockFrequency EntryFreq;
@@ -167,6 +169,9 @@ class ShrinkWrapImpl {
   /// opposite. False positives won't lead to incorrect analysis results,
   /// therefore this approach is fair.
   BitVector StackAddressUsedBlockInfo;
+
+  /// Restore invalidated
+  bool RestoreInvalidated;
 
   /// Check if \p MI uses or defines a callee-saved register or
   /// a frame index. If this is the case, this means \p MI must happen
@@ -229,8 +234,10 @@ class ShrinkWrapImpl {
   /// Initialize the pass for \p MF.
   void init(MachineFunction &MF) {
     RCI.runOnMachineFunction(MF);
+    MFI = &MF.getFrameInfo();
     Save = nullptr;
     Restore = nullptr;
+    RestoreInvalidated = false;
     EntryFreq = MBFI->getEntryFreq();
     const TargetSubtargetInfo &Subtarget = MF.getSubtarget();
     const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
@@ -246,7 +253,7 @@ class ShrinkWrapImpl {
 
   /// Check whether or not Save and Restore points are still interesting for
   /// shrink-wrapping.
-  bool ArePointsInteresting() const { return Save != Entry && Save && Restore; }
+  bool ArePointsInteresting() const { return Save != Entry && Save; }
 
 public:
   ShrinkWrapImpl(MachineDominatorTree *MDT, MachinePostDominatorTree *MPDT,
@@ -258,6 +265,9 @@ public:
   static bool isShrinkWrapEnabled(const MachineFunction &MF);
 
   bool run(MachineFunction &MF);
+
+  /// determine not must not in frame for machine basic block.
+  bool determineMustNotInFrame(MachineFunction &MF);
 };
 
 class ShrinkWrapLegacy : public MachineFunctionPass {
@@ -377,7 +387,8 @@ bool ShrinkWrapImpl::useOrDefCSROrFI(const MachineInstr &MI, RegScavenger *RS,
       }
     }
     // Skip FrameIndex operands in DBG_VALUE instructions.
-    if (UseOrDefCSR || (MO.isFI() && !MI.isDebugValue())) {
+    if (UseOrDefCSR || (MO.isFI() && !MFI->isFixedObjectIndex(MO.getIndex()) &&
+                        !MI.isDebugValue())) {
       LLVM_DEBUG(dbgs() << "Use or define CSR(" << UseOrDefCSR << ") or FI("
                         << MO.isFI() << "): " << MI << '\n');
       return true;
@@ -711,16 +722,21 @@ void ShrinkWrapImpl::updateSaveRestorePoints(MachineBasicBlock &MBB,
     Save = MDT->findNearestCommonDominator(Save, &MBB);
   assert(Save);
 
-  if (!Restore)
-    Restore = &MBB;
-  else if (MPDT->getNode(&MBB)) // If the block is not in the post dom tree, it
-                                // means the block never returns. If that's the
-                                // case, we don't want to call
-                                // `findNearestCommonDominator`, which will
-                                // return `Restore`.
-    Restore = MPDT->findNearestCommonDominator(Restore, &MBB);
-  else
-    Restore = nullptr; // Abort, we can't find a restore point in this case.
+  if (!RestoreInvalidated) {
+    if (!Restore)
+      Restore = &MBB;
+    else if (MPDT->getNode(&MBB)) // If the block is not in the post dom tree,
+                                  // it means the block never returns. If that's
+                                  // the case, we don't want to call
+                                  // `findNearestCommonDominator`, which will
+                                  // return `Restore`.
+      Restore = MPDT->findNearestCommonDominator(Restore, &MBB);
+    else
+      Restore = nullptr; // Abort, we can't find a restore point in this case.
+  }
+
+  if (Restore == nullptr)
+    RestoreInvalidated = true;
 
   // Make sure we would be able to insert the restore code before the
   // terminator.
@@ -738,12 +754,6 @@ void ShrinkWrapImpl::updateSaveRestorePoints(MachineBasicBlock &MBB,
       Restore = FindIDom<>(*Restore, Restore->successors(), *MPDT);
       break;
     }
-  }
-
-  if (!Restore) {
-    LLVM_DEBUG(
-        dbgs() << "Restore point needs to be spanned on several blocks\n");
-    return;
   }
 
   // Make sure Save and Restore are suitable for shrink-wrapping:
@@ -982,16 +992,26 @@ bool ShrinkWrapImpl::run(MachineFunction &MF) {
   if (!ArePointsInteresting())
     return Changed;
 
+  if (!determineMustNotInFrame(MF)) {
+    ++NumCandidatesDropped;
+    return false;
+  }
+
   LLVM_DEBUG(dbgs() << "Final shrink wrap candidates:\nSave: "
-                    << printMBBReference(*Save) << ' '
-                    << "\nRestore: " << printMBBReference(*Restore) << '\n');
+                    << printMBBReference(*Save) << ' ');
+  LLVM_DEBUG({
+    if (Restore)
+      dbgs() << "\nRestore: " << printMBBReference(*Restore) << '\n';
+  });
 
   MachineFrameInfo &MFI = MF.getFrameInfo();
 
   // List of CalleeSavedInfo for registers will be added during prologepilog
   // pass
   SaveRestorePoints SavePoints({{Save, {}}});
-  SaveRestorePoints RestorePoints({{Restore, {}}});
+  SaveRestorePoints RestorePoints;
+  if (Restore)
+    RestorePoints[Restore] = {};
 
   MFI.setSavePoints(SavePoints);
   MFI.setRestorePoints(RestorePoints);
@@ -1063,4 +1083,25 @@ bool ShrinkWrapImpl::isShrinkWrapEnabled(const MachineFunction &MF) {
     return false;
   }
   llvm_unreachable("Invalid shrink-wrapping state");
+}
+
+bool ShrinkWrapImpl::determineMustNotInFrame(MachineFunction &MF) {
+  SmallSet<MachineBasicBlock *, 4> NotInFrameCandidates;
+  for (MachineBasicBlock &MBB : MF) {
+    if (!MDT->dominates(Save, &MBB)) {
+      NotInFrameCandidates.insert(&MBB);
+    }
+  }
+
+  for (MachineBasicBlock *MBB : NotInFrameCandidates) {
+    for (MachineBasicBlock *pred: MBB->predecessors()) {
+      if (!NotInFrameCandidates.count(pred) && pred != Restore)
+        return false;
+    }
+  }
+
+  for (MachineBasicBlock *MBB : NotInFrameCandidates) {
+    MBB->setMustNotInFrame(true);
+  }
+  return true;
 }
