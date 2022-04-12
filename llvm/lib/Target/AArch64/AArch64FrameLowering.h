@@ -47,6 +47,7 @@ public:
   /// the function.
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
+  void emitV8ParentFPDefinition(MachineFunction &MF) const override;
 
   /// Harden the entire function with pac-ret.
   ///

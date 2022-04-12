@@ -224,6 +224,10 @@ LLVM_ABI extern char &PostRAMachineSinkingID;
 /// This pass adds flow sensitive discriminators.
 LLVM_ABI extern char &MIRAddFSDiscriminatorsID;
 
+/// FrameElide pass. Look for the best place to insert save and restore
+// instruction and update the MachineFunctionInfo with that information.
+LLVM_ABI extern char &FrameElideID;
+
 /// This pass reads flow sensitive profile.
 LLVM_ABI extern char &MIRProfileLoaderPassID;
 

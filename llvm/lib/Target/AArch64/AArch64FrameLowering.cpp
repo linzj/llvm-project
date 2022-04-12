@@ -1266,6 +1266,18 @@ bool AArch64FrameLowering::enableFullCFIFixup(const MachineFunction &MF) const {
          MF.getInfo<AArch64FunctionInfo>()->needsAsyncDwarfUnwindInfo(MF);
 }
 
+void AArch64FrameLowering::emitV8ParentFPDefinition(MachineFunction &MF) const {
+  const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  if (AFI->isJSStub()) {
+    if (MF.getRegInfo().isLiveIn(AArch64::X25)) {
+      MachineBasicBlock &MBB = MF.front();
+      DebugLoc DL;
+      const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+      TII->copyPhysReg(MBB, MBB.begin(), DL, AArch64::X25, AArch64::FP, false);
+    }
+  }
+}
+
 /// getFrameIndexReference - Provide a base+offset reference to an FI slot for
 /// debug info.  It's the same as what we use for resolving the code-gen
 /// references for now.  FIXME: This can go wrong when references are
@@ -2816,9 +2828,7 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   AFI->setSVECalleeSavedStackSize(ZPRCSStackSize, alignTo(PPRCSStackSize, 16));
 
   if (hasFP(MF)) {
-    if (AFI->isJSStub()) {
-      SavedRegs.set(AArch64::X16);
-    } else if (AFI->isJSFunction()) {
+    if (AFI->isJSFunction()) {
       SavedRegs.set(AArch64::X27);
       SavedRegs.set(AArch64::X1);
       SavedRegs.set(AArch64::X0);

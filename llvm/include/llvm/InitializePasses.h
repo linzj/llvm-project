@@ -122,6 +122,7 @@ LLVM_ABI void initializeFinalizeISelPass(PassRegistry &);
 LLVM_ABI void initializeFixIrreduciblePass(PassRegistry &);
 LLVM_ABI void initializeFixupStatepointCallerSavedLegacyPass(PassRegistry &);
 LLVM_ABI void initializeFlattenCFGLegacyPassPass(PassRegistry &);
+LLVM_ABI void initializeFrameElidePass(PassRegistry &);
 LLVM_ABI void initializeFuncletLayoutPass(PassRegistry &);
 LLVM_ABI void initializeGCEmptyBasicBlocksLegacyPass(PassRegistry &);
 LLVM_ABI void initializeGCMachineCodeAnalysisPass(PassRegistry &);

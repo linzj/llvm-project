@@ -1016,13 +1016,6 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF,
     DefCFAOffsetCandidates.addInst(LastPush, FPCXTSaveSize, BeforeFPPush);
   }
 
-  // JS Related
-  if (AFI->isJSStub()) {
-    if (MF.getRegInfo().isLiveIn(ARM::R9)) {
-      MachineBasicBlock &MBB = MF.front();
-      TII.copyPhysReg(MBB, MBB.begin(), dl, ARM::R9, ARM::R11, false);
-    }
-  }
   // Allocate the vararg register save area.
   if (ArgRegsSaveSize) {
     emitSPUpdate(isARM, MBB, MBBI, dl, TII, -ArgRegsSaveSize,
@@ -1621,6 +1614,17 @@ void ARMFrameLowering::emitEpilogue(MachineFunction &MF,
     insertSEHRange(MBB, RangeStart, MBB.end(), TII, MachineInstr::FrameDestroy);
     BuildMI(MBB, MBB.end(), dl, TII.get(ARM::SEH_EpilogEnd))
         .setMIFlag(MachineInstr::FrameDestroy);
+  }
+}
+
+void ARMFrameLowering::emitV8ParentFPDefinition(MachineFunction &MF) const {
+  const ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+  if (AFI->isJSStub()) {
+    if (MF.getRegInfo().isLiveIn(ARM::R9)) {
+      MachineBasicBlock &MBB = MF.front();
+      const ARMBaseInstrInfo &TII = *STI.getInstrInfo();
+      TII.copyPhysReg(MBB, MBB.begin(), DebugLoc(), ARM::R9, ARM::R11, false);
+    }
   }
 }
 

@@ -64,6 +64,7 @@ add_llvm_component_library(LLVMCodeGen
   FEntryInserter.cpp
   FinalizeISel.cpp
   FixupStatepointCallerSaved.cpp
+  FrameElide.cpp
   FuncletLayout.cpp
   MachineFunctionAnalysis.cpp
   GCMetadata.cpp

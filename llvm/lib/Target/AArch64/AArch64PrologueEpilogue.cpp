@@ -687,14 +687,6 @@ void AArch64PrologueEmitter::emitPrologue() {
   if (MF.getFunction().getCallingConv() == CallingConv::GHC)
     return;
 
-  if (AFI->isJSStub()) {
-    if (MF.getRegInfo().isLiveIn(AArch64::X28)) {
-      MachineBasicBlock &EntryMBB = MF.front();
-      TII->copyPhysReg(EntryMBB, EntryMBB.begin(), DL, AArch64::X28, AArch64::FP,
-                       false);
-    }
-  }
-
   // Set tagged base pointer to the requested stack slot. Ideally it should
   // match SP value after prologue.
   if (std::optional<int> TBPI = AFI->getTaggedBasePointerIndex())
