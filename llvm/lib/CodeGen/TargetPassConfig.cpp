@@ -918,7 +918,14 @@ void TargetPassConfig::addMachinePasses() {
   // Insert prolog/epilog code.  Eliminate abstract frame index references...
   if (getOptLevel() != CodeGenOpt::None) {
     addPass(&PostRAMachineSinkingID);
-    addPass(&ShrinkWrapID);
+    switch (TM->getTargetTriple().getEnvironment()) {
+    case Triple::V8:
+      addPass(&FrameElideID);
+      break;
+    default:
+      addPass(&ShrinkWrapID);
+      break;
+    }
   }
 
   // Prolog/Epilog inserter needs a TargetMachine to instantiate. But only

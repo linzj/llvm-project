@@ -152,6 +152,7 @@ void initializeFlattenCFGPassPass(PassRegistry&);
 void initializeFloat2IntLegacyPassPass(PassRegistry&);
 void initializeForceFunctionAttrsLegacyPassPass(PassRegistry&);
 void initializeForwardControlFlowIntegrityPass(PassRegistry&);
+void initializeFrameElidePass(PassRegistry&);
 void initializeFuncletLayoutPass(PassRegistry&);
 void initializeFunctionImportLegacyPassPass(PassRegistry&);
 void initializeGCMachineCodeAnalysisPass(PassRegistry&);

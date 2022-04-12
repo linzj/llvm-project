@@ -182,6 +182,8 @@ public:
   virtual void inlineStackProbe(MachineFunction &MF,
                                 MachineBasicBlock &PrologueMBB) const {}
 
+  virtual void emitV8ParentFPDefinition(MachineFunction &MF) const {}
+
   /// Adjust the prologue to have the function use segmented stacks. This works
   /// by adding a check even before the "normal" function prologue.
   virtual void adjustForSegmentedStacks(MachineFunction &MF,

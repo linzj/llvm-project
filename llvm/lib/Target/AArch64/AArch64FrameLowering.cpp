@@ -938,12 +938,6 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   if (MF.getFunction().getCallingConv() == CallingConv::GHC)
     return;
 
-  if (AFI->isJSStub()) {
-    if (MF.getRegInfo().isLiveIn(AArch64::X28)) {
-      MachineBasicBlock &MBB = MF.front();
-      TII->copyPhysReg(MBB, MBB.begin(), DL, AArch64::X28, AArch64::FP, false);
-    }
-  }
   // Set tagged base pointer to the bottom of the stack frame.
   // Ideally it should match SP value after prologue.
   AFI->setTaggedBasePointerOffset(MFI.getStackSize());
@@ -1706,6 +1700,18 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
         .setMIFlag(MachineInstr::FrameDestroy);
 
   MF.setHasWinCFI(HasWinCFI);
+}
+
+void AArch64FrameLowering::emitV8ParentFPDefinition(MachineFunction &MF) const {
+  const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
+  if (AFI->isJSStub()) {
+    if (MF.getRegInfo().isLiveIn(AArch64::X25)) {
+      MachineBasicBlock &MBB = MF.front();
+      DebugLoc DL;
+      const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+      TII->copyPhysReg(MBB, MBB.begin(), DL, AArch64::X25, AArch64::FP, false);
+    }
+  }
 }
 
 /// getFrameIndexReference - Provide a base+offset reference to an FI slot for
@@ -2558,9 +2564,7 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   AFI->setSVECalleeSavedStackSize(alignTo(SVECSStackSize, 16));
 
   if (hasFP(MF)) {
-    if (AFI->isJSStub()) {
-      SavedRegs.set(AArch64::X16);
-    } else if (AFI->isJSFunction()) {
+    if (AFI->isJSFunction()) {
       SavedRegs.set(AArch64::X27);
       SavedRegs.set(AArch64::X1);
       SavedRegs.set(AArch64::X0);

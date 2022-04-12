@@ -404,13 +404,6 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF,
   StackAdjustingInsts DefCFAOffsetCandidates;
   bool HasFP = hasFP(MF);
 
-  // JS Related
-  if (AFI->isJSStub()) {
-    if (MF.getRegInfo().isLiveIn(ARM::R9)) {
-      MachineBasicBlock &MBB = MF.front();
-      TII.copyPhysReg(MBB, MBB.begin(), dl, ARM::R9, ARM::R11, false);
-    }
-  }
   // Allocate the vararg register save area.
   if (ArgRegsSaveSize) {
     emitSPUpdate(isARM, MBB, MBBI, dl, TII, -ArgRegsSaveSize,
@@ -920,6 +913,17 @@ void ARMFrameLowering::emitEpilogue(MachineFunction &MF,
 
   if (ArgRegsSaveSize)
     emitSPUpdate(isARM, MBB, MBBI, dl, TII, ArgRegsSaveSize);
+}
+
+void ARMFrameLowering::emitV8ParentFPDefinition(MachineFunction &MF) const {
+  const ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+  if (AFI->isJSStub()) {
+    if (MF.getRegInfo().isLiveIn(ARM::R9)) {
+      MachineBasicBlock &MBB = MF.front();
+      const ARMBaseInstrInfo &TII = *STI.getInstrInfo();
+      TII.copyPhysReg(MBB, MBB.begin(), DebugLoc(), ARM::R9, ARM::R11, false);
+    }
+  }
 }
 
 /// getFrameIndexReference - Provide a base+offset reference to an FI slot for

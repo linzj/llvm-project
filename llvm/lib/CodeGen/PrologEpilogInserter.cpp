@@ -374,6 +374,52 @@ void PEI::calculateSaveRestoreBlocks(MachineFunction &MF) {
     return;
   }
 
+  auto ShouldUseFrameElide = [&]() {
+    for (MachineBasicBlock &MBB : MF) {
+      if (MBB.mustNotInFrame())
+        return true;
+    }
+    return false;
+  };
+  if (ShouldUseFrameElide()) {
+    DenseSet<MachineBasicBlock *> SaveBlocksSet, RestoreBlocksSet;
+    for (MachineBasicBlock &MBB : MF) {
+      if (!MBB.mustNotInFrame()) {
+        // Special case: The start block needs a frame.
+        if (MBB.pred_empty()) {
+          SaveBlocksSet.insert(&MBB);
+        }
+        // Find "frame -> no frame" transitions, inserting frame
+        // deconstructions.
+        for (MachineBasicBlock *Succ : MBB.successors()) {
+          if (Succ->mustNotInFrame()) {
+            assert(MBB.succ_size() == 1);
+            RestoreBlocksSet.insert(&MBB);
+          }
+        }
+        if (MBB.isReturnBlock()) {
+          RestoreBlocksSet.insert(&MBB);
+        }
+      } else {
+        // Find "no frame -> frame" transitions, inserting frame constructions.
+        for (MachineBasicBlock *Succ : MBB.successors()) {
+          if (!Succ->mustNotInFrame()) {
+            assert(MBB.succ_size() != 1);
+            SaveBlocksSet.insert(Succ);
+          }
+        }
+      }
+    }
+
+    for (MachineBasicBlock *MBB : SaveBlocksSet) {
+      SaveBlocks.push_back(MBB);
+    }
+
+    for (MachineBasicBlock *MBB : RestoreBlocksSet) {
+      RestoreBlocks.push_back(MBB);
+    }
+    return;
+  }
   // Save refs to entry and return blocks.
   SaveBlocks.push_back(&MF.front());
   for (MachineBasicBlock &MBB : MF) {
@@ -1110,6 +1156,7 @@ void PEI::insertPrologEpilogCode(MachineFunction &MF) {
   for (MachineBasicBlock *SaveBlock : SaveBlocks)
     TFI.inlineStackProbe(MF, *SaveBlock);
 
+  TFI.emitV8ParentFPDefinition(MF);
   // Emit additional code that is required to support segmented stacks, if
   // we've been asked for it.  This, when linked with a runtime with support
   // for segmented stacks (libgcc is one), will result in allocating stack

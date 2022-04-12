@@ -226,7 +226,15 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   if (MF.getFunction().getCallingConv() == CallingConv::V8CC) {
     markSuperRegs(Reserved, AArch64::W29);
     markSuperRegs(Reserved, AArch64::W26);
+#if defined(V8_COMPRESS_POINTERS_IN_SHARED_CAGE)
+    markSuperRegs(Reserved, AArch64::W28);
+#endif
   }
+
+  if (MF.getFunction().hasFnAttribute("js-stub-call")) {
+    markSuperRegs(Reserved, AArch64::W16);
+  }
+
   if (MF.getFunction().hasFnAttribute("dart-call")) {
     // reserve W27 for object pool
     markSuperRegs(Reserved, AArch64::W27);
