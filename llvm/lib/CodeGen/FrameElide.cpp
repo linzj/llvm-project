@@ -1,6 +1,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
+#include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -57,9 +58,9 @@ class FrameElide : public MachineFunctionPass {
 
     int JumpTableIndex;
   };
-  /// Hold the information of the basic block frequency.
+  /// Hold the information of the branch probability.
   /// Use to check the profitability of the new points.
-  MachineBlockFrequencyInfo *MBFI;
+  const MachineBranchProbabilityInfo *MBPI;
 
   /// Hold the loop information. Used to determine if Save and Restore
   /// are in the same loop.
@@ -120,7 +121,7 @@ class FrameElide : public MachineFunctionPass {
   /// Initialize the pass for \p MF.
   void init(MachineFunction &MF) {
     MFI = &MF.getFrameInfo();
-    MBFI = &getAnalysis<MachineBlockFrequencyInfo>();
+    MBPI = &getAnalysis<MachineBranchProbabilityInfo>();
     MLI = &getAnalysis<MachineLoopInfo>();
     ORE = &getAnalysis<MachineOptimizationRemarkEmitterPass>().getORE();
     const TargetSubtargetInfo &Subtarget = MF.getSubtarget();
@@ -160,6 +161,7 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesAll();
+    AU.addRequired<MachineBranchProbabilityInfo>();
     AU.addRequired<MachineBlockFrequencyInfo>();
     AU.addRequired<MachineOptimizationRemarkEmitterPass>();
     AU.addRequired<MachineLoopInfo>();
@@ -185,6 +187,7 @@ char FrameElide::ID = 0;
 char &llvm::FrameElideID = FrameElide::ID;
 
 INITIALIZE_PASS_BEGIN(FrameElide, DEBUG_TYPE, "Frame Elide Pass", false, false)
+INITIALIZE_PASS_DEPENDENCY(MachineBranchProbabilityInfo)
 INITIALIZE_PASS_DEPENDENCY(MachineBlockFrequencyInfo)
 INITIALIZE_PASS_DEPENDENCY(MachineOptimizationRemarkEmitterPass)
 INITIALIZE_PASS_DEPENDENCY(MachineLoopInfo)
@@ -613,12 +616,13 @@ void FrameElide::determineDeferredBlocks() {
       continue;
     DeferredBlocks.reset(ID);
     MachineBasicBlock *MBB = MachineFunc->getBlockNumbered(ID);
-    double Base = MBFI->getBlockFreq(MBB).getFrequency();
-    for (MachineBasicBlock *Succ : MBB->successors()) {
-      double Freq = MBFI->getBlockFreq(Succ).getFrequency();
-      double Prob = Freq / Base;
+    for (auto I = MBB->succ_begin(), E = MBB->succ_end(); I != E; ++I) {
+      const BranchProbability BP = MBPI->getEdgeProbability(MBB, *I);
+      double Prob =
+          static_cast<double>(BP.getNumerator()) / BP.getDenominator();
+
       if (Prob > 0.05) {
-        WorkingList.push_back(Succ->getNumber());
+        WorkingList.push_back((*I)->getNumber());
       }
     }
   }
