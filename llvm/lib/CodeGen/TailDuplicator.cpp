@@ -630,6 +630,11 @@ bool TailDuplicator::shouldTailDuplicate(bool IsSimple,
 
     if (InstrCount > MaxDuplicateCount)
       return false;
+
+    if (MI.getOpcode() == TargetOpcode::STATEPOINT ||
+        MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+        MI.getOpcode() == TargetOpcode::STACKMAP)
+      return false;
   }
 
   // Check if any of the successors of TailBB has a PHI node in which the
