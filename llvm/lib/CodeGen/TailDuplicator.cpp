@@ -667,6 +667,12 @@ bool TailDuplicator::shouldTailDuplicate(bool IsSimple,
 
     if (InstrCount > MaxDuplicateCount)
       return false;
+
+    if (MI.getOpcode() == TargetOpcode::STATEPOINT ||
+        MI.getOpcode() == TargetOpcode::PATCHPOINT ||
+        MI.getOpcode() == TargetOpcode::STACKMAP)
+      return false;
+
     NumPhis += MI.isPHI();
   }
 
