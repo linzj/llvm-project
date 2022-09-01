@@ -327,6 +327,11 @@ void MachineCopyPropagation::ReadRegister(unsigned Reg, MachineInstr &Reader,
       }
     }
   }
+  // Like backward propagation, forward propagation should invalid Reg.
+  // We must ensure the next user must use the destination of the copy instead
+  // of the source of the copy. For forwardUses has failed, we must cut off the
+  // propagation.
+  Tracker.invalidateRegister(Reg, *TRI);
 }
 
 /// Return true if \p PreviousCopy did copy register \p Src to register \p Def.
@@ -414,17 +419,6 @@ bool MachineCopyPropagation::isForwardableRegClassCopy(const MachineInstr &Copy,
   if (const TargetRegisterClass *URC =
           UseI.getRegClassConstraint(UseIdx, TII, TRI))
     return URC->contains(CopySrcReg);
-
-  // Check if a STATEPOINT. If so, all the recorded phys should be forwardable.
-  if (UseI.getOpcode() == TargetOpcode::STATEPOINT) {
-    StatepointOpers Op(&UseI);
-    unsigned StartIdx = Op.getVarIdx();
-    int64_t NumDeoptArgs = UseI.getOperand(StartIdx + 5).getImm();
-    StartIdx += 6 + NumDeoptArgs;
-    if (UseIdx >= StartIdx)
-      return true;
-    return false;
-  }
 
   if (!UseI.isCopy())
     return false;
