@@ -279,7 +279,8 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     if (!LIS->hasInterval(Reg) || !LIS->getInterval(Reg).liveAt(Index)) {
       return false;
     }
-    MIB.addReg(VRM->getPhys(Reg));
+    // Must mark renamable or Machine Copy Propagation will not change it.
+    MIB.addReg(VRM->getPhys(Reg), RegState::Renamable);
     return true;
   };
 
