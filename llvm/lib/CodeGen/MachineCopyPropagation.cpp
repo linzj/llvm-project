@@ -592,11 +592,6 @@ void MachineCopyPropagation::readRegister(MCRegister Reg, MachineInstr &Reader,
       }
     }
   }
-  // Like backward propagation, forward propagation should invalid Reg.
-  // We must ensure the next user must use the destination of the copy instead
-  // of the source of the copy. For forwardUses has failed, we must cut off the
-  // propagation.
-  Tracker.invalidateRegister(Reg, *TRI);
 }
 
 void MachineCopyPropagation::readSuccessorLiveIns(
@@ -725,12 +720,20 @@ bool MachineCopyPropagation::isForwardableRegClassCopy(const MachineInstr &Copy,
           UseI.getRegClassConstraint(UseIdx, TII, TRI))
     return URC->contains(CopySrc);
 
+  // Check if a STATEPOINT. If so, all the recorded phys should be forwardable.
+  if (UseI.getOpcode() == TargetOpcode::STATEPOINT) {
+    StatepointOpers Op(&UseI);
+    unsigned StartIdx = Op.getVarIdx();
+    int64_t NumDeoptArgs = UseI.getOperand(StartIdx + 5).getImm();
+    StartIdx += 6 + NumDeoptArgs;
+    if (UseIdx >= StartIdx)
+      return true;
+    return false;
+  }
+
   std::optional<DestSourcePair> UseICopyOperands =
       isCopyInstr(UseI, *TII, UseCopyInstr);
   if (!UseICopyOperands)
-=======
-  if (!UseI.isCopy())
->>>>>>> d1ba837104f2 (BUGFIX:44631707:dart LLVM precompiler: propagateToListeners produces wrong stack maps)
     return false;
 
   /// COPYs don't have register class constraints, so if the user instruction
