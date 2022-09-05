@@ -415,17 +415,6 @@ bool MachineCopyPropagation::isForwardableRegClassCopy(const MachineInstr &Copy,
           UseI.getRegClassConstraint(UseIdx, TII, TRI))
     return URC->contains(CopySrcReg);
 
-  // Check if a STATEPOINT. If so, all the recorded phys should be forwardable.
-  if (UseI.getOpcode() == TargetOpcode::STATEPOINT) {
-    StatepointOpers Op(&UseI);
-    unsigned StartIdx = Op.getVarIdx();
-    int64_t NumDeoptArgs = UseI.getOperand(StartIdx + 5).getImm();
-    StartIdx += 6 + NumDeoptArgs;
-    if (UseIdx >= StartIdx)
-      return true;
-    return false;
-  }
-
   if (!UseI.isCopy())
     return false;
 
@@ -681,6 +670,40 @@ void MachineCopyPropagation::ForwardCopyPropagateBlock(MachineBasicBlock &MBB) {
         continue;
       } else if (MO.readsReg())
         ReadRegister(Reg, *MI, MO.isDebug() ? DebugUse : RegularUse);
+    }
+    // Handle recorded registers from StackMaps
+    unsigned StartIdx = static_cast<unsigned>(-1);
+    switch (MI->getOpcode()) {
+    case TargetOpcode::STATEPOINT: {
+      StatepointOpers Op(MI);
+      StartIdx = Op.getVarIdx();
+      int64_t NumDeoptArgs = MI->getOperand(StartIdx + 5).getImm();
+      StartIdx += 6 + NumDeoptArgs;
+      break;
+    }
+
+    case TargetOpcode::STACKMAP: {
+      StackMapOpers Op(MI);
+      StartIdx = Op.getVarIdx();
+      break;
+    }
+    case TargetOpcode::PATCHPOINT: {
+      PatchPointOpers Op(MI);
+      StartIdx = Op.getVarIdx();
+      break;
+    }
+    }
+    if (StartIdx != static_cast<unsigned>(-1)) {
+      for (unsigned i = MI->getNumOperands() - 1; i >= StartIdx; --i) {
+        MachineOperand &MO = MI->getOperand(i);
+        if (!MO.isReg())
+          continue;
+        assert(Register::isPhysicalRegister(MO.getReg()));
+        // We must ensure the next user must use the destination of the copy
+        // instead of the source of the copy. For forwardUses has failed, we
+        // must cut off the propagation.
+        Tracker.clobberRegister(MO.getReg(), *TRI);
+      }
     }
 
     // The instruction has a register mask operand which means that it clobbers
