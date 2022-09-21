@@ -393,7 +393,19 @@ void PEI::calculateSaveRestoreBlocks(MachineFunction &MF) {
         // deconstructions.
         for (MachineBasicBlock *Succ : MBB.successors()) {
           if (Succ->mustNotInFrame()) {
-            assert(MBB.succ_size() == 1);
+            assert([&]() {
+              if (MBB.succ_size() == 1)
+                return true;
+              if (MBB.succ_size() != 2)
+                return false;
+              for (MachineBasicBlock *Succ2 : MBB.successors()) {
+                if (Succ == Succ2)
+                  continue;
+                if (Succ2->isEHPad())
+                  return true;
+              }
+              return false;
+            }());
             RestoreBlocksSet.insert(&MBB);
           }
         }
