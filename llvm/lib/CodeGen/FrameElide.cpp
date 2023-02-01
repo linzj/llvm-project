@@ -258,6 +258,8 @@ bool FrameElide::runOnMachineFunction(MachineFunction &MF) {
   LLVM_DEBUG(dbgs() << "**** Analysing " << MF.getName() << '\n');
 
   init(MF);
+  // Make sure blocks are numbered in order
+  MF.RenumberBlocks();
 
   if (!ensureMFSplitEdgeForm())
     return false;
