@@ -180,6 +180,135 @@ public:
   bool runOnMachineFunction(MachineFunction &MF) override;
 };
 
+bool mergeEHPad(MachineFunction &);
+
+class EHPadNode : public FoldingSetNode {
+public:
+  EHPadNode(MachineBasicBlock *MBB);
+  ~EHPadNode() = default;
+
+  void AddPad(MachineBasicBlock *MBB);
+  SmallVector<MachineBasicBlock *, 8> &Pads();
+
+  void Profile(FoldingSetNodeID &ID) const;
+  MachineBasicBlock *getTarget() const;
+
+private:
+  MachineBasicBlock *Target;
+  SmallVector<MachineBasicBlock *, 8> EHPads;
+};
+
+EHPadNode::EHPadNode(MachineBasicBlock *MBB) : Target(MBB) {}
+
+void EHPadNode::AddPad(MachineBasicBlock *MBB) { EHPads.push_back(MBB); }
+
+void EHPadNode::Profile(FoldingSetNodeID &ID) const {
+  ID.AddPointer(Target);
+  MachineBasicBlock *Head = EHPads[0];
+  auto It = Head->begin(), End = Head->end();
+  ++It;
+  for (; It != End; ++It) {
+    if (It->isTerminator() && !It->isReturn())
+      break;
+    ID.AddInteger(MachineInstrExpressionTrait::getHashValue(&*It));
+  }
+}
+
+SmallVector<MachineBasicBlock *, 8> &EHPadNode::Pads() { return EHPads; }
+
+MachineBasicBlock *EHPadNode::getTarget() const { return Target; }
+
+bool mergeEHPad(MachineFunction &MF) {
+  FoldingSet<EHPadNode> EHPadNodeSet;
+  BumpPtrAllocator Alloc;
+  // Collect EHPad points to the same targets.
+  for (MachineBasicBlock &MBB : MF) {
+    if (!MBB.isEHPad())
+      continue;
+    if (MBB.succ_size() > 1)
+      continue;
+    // Validate block
+    // Must be:
+    // EH_LABEL <mcsymbol >
+    // %2644:gpr64 = COPY $x1
+    // %2643:gpr64 = COPY $x0
+    // B %bb.x
+    auto ValidateIt = MBB.begin(), End = MBB.end();
+    if (!ValidateIt->isEHLabel())
+      continue;
+    ++ValidateIt;
+    FoldingSetNodeID ID;
+    MachineBasicBlock *Target;
+    if (MBB.succ_size() == 1) {
+      Target = *MBB.succ_begin();
+    } else {
+      Target = nullptr;
+    }
+    ID.AddPointer(Target);
+    for (; ValidateIt != End; ++ValidateIt) {
+      if (ValidateIt->isTerminator() && !ValidateIt->isReturn())
+        break;
+      ID.AddInteger(MachineInstrExpressionTrait::getHashValue(&*ValidateIt));
+    }
+    // Not fallthrough branch then must be a unconditional branch or a return.
+    if (ValidateIt != End && !ValidateIt->isUnconditionalBranch())
+      continue;
+
+    void *InsertPos;
+    if (EHPadNode *Existing = EHPadNodeSet.FindNodeOrInsertPos(ID, InsertPos)) {
+      MachineBasicBlock *Head = Existing->Pads()[0];
+      auto it0 = Head->begin();
+      auto end0 = Head->end();
+      // skip EH_LABEL.
+      ++it0;
+      auto it1 = MBB.begin();
+      auto end1 = MBB.end();
+      // skip EH_LABEL.
+      ++it1;
+      for (; it0 != end0; ++it0, ++it1) {
+        if (it0->isTerminator())
+          break;
+        if (!it0->isIdenticalTo(*it1)) {
+          goto not_identical;
+        }
+      }
+      Existing->AddPad(&MBB);
+    not_identical:
+      continue;
+    }
+    EHPadNode *NewNode = new (Alloc) EHPadNode(Target);
+    NewNode->AddPad(&MBB);
+    EHPadNodeSet.InsertNode(NewNode, InsertPos);
+  }
+
+  bool Changed = false;
+  // Merge pads branch to the same target.
+  for (EHPadNode &Node : EHPadNodeSet) {
+    auto &EHPads = Node.Pads();
+    if (EHPads.size() <= 1)
+      continue;
+    Changed = true;
+    MachineBasicBlock *MoveTo = EHPads[0];
+    for (size_t i = 1; i < EHPads.size(); ++i) {
+      MachineBasicBlock *From = EHPads[i];
+      // Shall be:
+      // EH_LABEL <mcsymbol >
+      // %421:gpr64 = COPY $x1
+      // %420:gpr64 = COPY $x0
+      // B xxx
+      MoveTo->splice(MoveTo->begin(), From, From->begin());
+      // Change CFG.
+      SmallVector<MachineBasicBlock *, 4> Preds(From->predecessors());
+      for (auto Pred : Preds) {
+        Pred->replaceSuccessor(From, MoveTo);
+      }
+      if (From->succ_size() == 1)
+        From->removeSuccessor(Node.getTarget());
+      From->eraseFromParent();
+    }
+  }
+  return Changed;
+}
 } // end anonymous namespace
 
 char FrameElide::ID = 0;
@@ -262,12 +391,12 @@ bool FrameElide::runOnMachineFunction(MachineFunction &MF) {
   MF.RenumberBlocks();
 
   if (!ensureMFSplitEdgeForm())
-    return false;
+    return mergeEHPad(MF), false;
   determineDeferredBlocks();
   markBlocks();
   propagateMarks();
 
-  return true;
+  return mergeEHPad(MF);
 }
 
 bool FrameElide::ensureMFSplitEdgeForm() {
