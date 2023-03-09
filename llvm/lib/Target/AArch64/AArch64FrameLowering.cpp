@@ -1880,7 +1880,8 @@ void computeCalleeSaveRegisterPairs(const AArch64FrameLowering &AFL,
     // The order of the registers in the list is controlled by
     // getCalleeSavedRegs(), so they will always be in-order, as well.
     assert((!RPI.isPaired() ||
-            (CSI[i].getFrameIdx() + RegInc == CSI[i + RegInc].getFrameIdx())) &&
+            (CSI[i].getFrameIdx() + RegInc == CSI[i + RegInc].getFrameIdx()) ||
+            (CSI[i].getFrameIdx() - 1 == CSI[i + RegInc].getFrameIdx())) &&
            "Out of order callee saved regs!");
 
     assert((!RPI.isPaired() || !NeedsFrameRecord || RPI.Reg2 != AArch64::FP ||
@@ -2592,6 +2593,12 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
       continue;
     }
 
+    // Dart async function
+    // These functions will have all the CSRs saved.
+    if (AFI->isDartSuspendableFunction()) {
+      SavedRegs.set(Reg);
+    }
+
     bool RegUsed = SavedRegs.test(Reg);
     MCRegister PairedReg;
     const bool RegIsGPR64 = AArch64::GPR64RegClass.contains(Reg);
@@ -2857,13 +2864,36 @@ bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
   MachineFrameInfo &MFI = MF.getFrameInfo();
   auto *AFI = MF.getInfo<AArch64FunctionInfo>();
 
-  // V8/Dart: reserve fixed spill slots for the JS markers.
-  if (AFI->isJSStub()) {
-    AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(8, -24));
-  } else if (AFI->isJSFunction()) {
-    AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(8, -24));
-    AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(8, -32));
-    AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(8, -40));
+  // V8/Dart: JS and Dart suspendable functions use a fixed frame layout;
+  // assign their spill slots here.
+  if (AFI->isJSStub() || AFI->isJSFunction() ||
+      AFI->isDartSuspendableFunction()) {
+    int FixedOffset = 0;
+    for (auto &CS : CSI) {
+      unsigned Reg = CS.getReg();
+      const TargetRegisterClass *RC = RegInfo->getMinimalPhysRegClass(Reg);
+      unsigned Size = RegInfo->getSpillSize(*RC);
+      FixedOffset -= Size;
+      int FrameIdx = MFI.CreateFixedSpillStackObject(Size, FixedOffset);
+      CS.setFrameIdx(FrameIdx);
+    }
+    if (AFI->isJSStub()) {
+      FixedOffset -= 8;
+      AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(8, FixedOffset));
+    } else if (AFI->isJSFunction()) {
+      FixedOffset -= 8;
+      AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(8, FixedOffset));
+      FixedOffset -= 8;
+      AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(8,
+                                                                FixedOffset));
+      FixedOffset -= 8;
+      AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(8, FixedOffset));
+    } else {
+      FixedOffset -= 8;
+      AFI->setFIDartSuspendMarker(
+          MFI.CreateFixedSpillStackObject(8, FixedOffset));
+    }
+    return true;
   }
 
   // Insert VG into the list of CSRs, immediately before LR if saved.

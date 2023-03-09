@@ -918,6 +918,11 @@ void AArch64PrologueEmitter::emitPrologue() {
     TII->storeRegToStackSlot(MBB, AfterSVESavesI, AArch64::X27, true,
                              AFI->getFIContextMarker(), &AArch64::GPR64RegClass,
                              Register());
+  } else if (AFI->isDartSuspendableFunction()) {
+    // Init Suspend object in the spill slot.
+    TII->storeRegToStackSlot(MBB, AfterSVESavesI, AArch64::X22, true,
+                             AFI->getFIDartSuspendMarker(),
+                             &AArch64::GPR64RegClass, Register());
   }
 }
 
