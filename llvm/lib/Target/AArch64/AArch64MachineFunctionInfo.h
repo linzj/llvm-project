@@ -131,8 +131,10 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   int FIJSFunctionMarker = -1;
   int FIContextMarker = -1;
   int FIArgsCountMarker = -1;
+  int FIDartSuspendMarker = -1;
   bool IsJSFunction = false;
   bool IsJSStub = false;
+  bool IsDartSuspendableFunction = false;
   bool IsWASM = false;
 
 public:
@@ -337,18 +339,22 @@ public:
   // V8/Dart
   bool isJSFunction() const { return IsJSFunction; }
   bool isJSStub() const { return IsJSStub; }
+  bool isDartSuspendableFunction() const { return IsDartSuspendableFunction; }
   bool isWASM() const { return IsWASM; }
   void setJSFunction(bool s) { IsJSFunction = s; }
   void setJSStub(bool s) { IsJSStub = s; }
+  void setDartSuspendableFunction(bool s) { IsDartSuspendableFunction = s; }
   void setWASM(bool s) { IsWASM = s; }
   void setFIJSStubMarker(int FI) { FIJSStubMarker = FI; }
   void setFIJSFunctionMarker(int FI) { FIJSFunctionMarker = FI; }
   void setFIContextMarker(int FI) { FIContextMarker = FI; }
   void setFIArgsCountMarker(int FI) { FIArgsCountMarker = FI; }
+  void setFIDartSuspendMarker(int FI) { FIDartSuspendMarker = FI; }
   int getFIJSStubMarker() const { return FIJSStubMarker; }
   int getFIJSFunctionMarker() const { return FIJSFunctionMarker; }
   int getFIContextMarker() const { return FIContextMarker; }
   int getFIArgsCountMarker() const { return FIArgsCountMarker; }
+  int getFIDartSuspendMarker() const { return FIDartSuspendMarker; }
 
 private:
   // Hold the lists of LOHs.

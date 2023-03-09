@@ -1375,6 +1375,12 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
     TII->storeRegToStackSlot(MBB, MBBI, AArch64::X27, true,
                              AFI->getFIContextMarker(), &AArch64::GPR64RegClass,
                              TRI);
+  } else if (AFI->isDartSuspendableFunction()) {
+    // Init Suspend object in the spill slot.
+    const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+    TII->storeRegToStackSlot(MBB, MBBI, AArch64::X22, true,
+                             AFI->getFIDartSuspendMarker(),
+                             &AArch64::GPR64RegClass, TRI);
   }
 }
 
@@ -2089,7 +2095,8 @@ static void computeCalleeSaveRegisterPairs(
     // The order of the registers in the list is controlled by
     // getCalleeSavedRegs(), so they will always be in-order, as well.
     assert((!RPI.isPaired() ||
-            (CSI[i].getFrameIdx() + 1 == CSI[i + 1].getFrameIdx())) &&
+            (CSI[i].getFrameIdx() + 1 == CSI[i + 1].getFrameIdx()) ||
+            (CSI[i].getFrameIdx() - 1 == CSI[i + 1].getFrameIdx())) &&
            "Out of order callee saved regs!");
 
     assert((!RPI.isPaired() || !NeedsFrameRecord || RPI.Reg2 != AArch64::FP ||
@@ -2439,6 +2446,12 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
     if (Reg == BasePointerReg)
       SavedRegs.set(Reg);
 
+    // Dart async function
+    // These functions will have all the CSRs saved.
+    if (AFI->isDartSuspendableFunction()) {
+      SavedRegs.set(Reg);
+    }
+
     bool RegUsed = SavedRegs.test(Reg);
     unsigned PairedReg = AArch64::NoRegister;
     if (AArch64::GPR64RegClass.contains(Reg) ||
@@ -2774,18 +2787,40 @@ bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
     std::vector<CalleeSavedInfo> &CSI) const {
   AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
   // default handle.
-  if (!AFI->isJSStub() && !AFI->isJSFunction())
+  if (!AFI->isJSStub() && !AFI->isJSFunction() &&
+      !AFI->isDartSuspendableFunction())
     return false;
   MachineFrameInfo &MFI = MF.getFrameInfo();
   // No need to do anything.
   if (CSI.empty())
     return false;
-  if (AFI->isJSStub()) {
-    AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(8, -24));
-  } else {
-    AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(8, -24));
-    AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(8, -32));
-    AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(8, -40));
+  const TargetRegisterInfo *RegInfo = MF.getSubtarget().getRegisterInfo();
+
+  int FixedOffset = 0;
+  // Now that we know which registers need to be saved and restored, allocate
+  // stack slots for them.
+  for (auto &CS : CSI) {
+    unsigned Reg = CS.getReg();
+    const TargetRegisterClass *RC = RegInfo->getMinimalPhysRegClass(Reg);
+    unsigned Size = RegInfo->getSpillSize(*RC);
+    FixedOffset -= Size;
+    int FrameIdx = MFI.CreateFixedSpillStackObject(Size, FixedOffset);
+    CS.setFrameIdx(FrameIdx);
   }
-  return false;
+  if (AFI->isJSStub()) {
+    FixedOffset -= 8;
+    AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(8, FixedOffset));
+  } else if (AFI->isJSFunction()) {
+    FixedOffset -= 8;
+    AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(8, FixedOffset));
+    FixedOffset -= 8;
+    AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(8, FixedOffset));
+    FixedOffset -= 8;
+    AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(8, FixedOffset));
+  } else {
+    FixedOffset -= 8;
+    AFI->setFIDartSuspendMarker(
+        MFI.CreateFixedSpillStackObject(8, FixedOffset));
+  }
+  return true;
 }

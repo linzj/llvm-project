@@ -67,6 +67,8 @@ public:
       AFI->setJSFunction(true);
     else if (F.hasFnAttribute("js-stub-call"))
       AFI->setJSStub(true);
+    else if (F.hasFnAttribute("dart-suspendable-function"))
+      AFI->setDartSuspendableFunction(true);
     if (F.hasFnAttribute("js-wasm-call"))
       AFI->setWASM(true);
 

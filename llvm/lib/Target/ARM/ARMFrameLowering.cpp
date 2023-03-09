@@ -805,6 +805,16 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF,
                             TRI);
     TII.storeRegToStackSlot(MBB, MBBI, ARM::R7, true, AFI->getFIContextMarker(),
                             &ARM::GPRRegClass, TRI);
+  } else if (AFI->isDartSuspendableFunction()) {
+    const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+    DebugLoc DL;
+    BuildMI(MBB, MBBI, DL, TII.get(ARM::LDRi12), ARM::R12)
+        .addReg(ARM::R10)
+        .addImm(112)
+        .add(predOps(ARMCC::AL));
+    TII.storeRegToStackSlot(MBB, MBBI, ARM::R12, true,
+                            AFI->getFIDartSuspendMarker(), &ARM::GPRRegClass,
+                            TRI);
   }
 }
 
@@ -1770,6 +1780,12 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
   const MCPhysReg *CSRegs = MF.getRegInfo().getCalleeSavedRegs();
   for (unsigned i = 0; CSRegs[i]; ++i) {
     unsigned Reg = CSRegs[i];
+    // Dart async function
+    // These functions will have all the CSRs saved.
+    if (AFI->isDartSuspendableFunction()) {
+      SavedRegs.set(Reg);
+    }
+
     bool Spilled = false;
     if (SavedRegs.test(Reg)) {
       Spilled = true;
@@ -2717,38 +2733,47 @@ bool ARMFrameLowering::assignCalleeSavedSpillSlots(
     MachineFunction &MF, const TargetRegisterInfo *TRI,
     std::vector<CalleeSavedInfo> &CSI) const {
   ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+
   // default handle.
-  if (!AFI->isJSStub() && !AFI->isJSFunction())
+  if (!AFI->isJSStub() && !AFI->isJSFunction() &&
+      !AFI->isDartSuspendableFunction())
     return false;
   MachineFrameInfo &MFI = MF.getFrameInfo();
   // No need to do anything.
   if (CSI.empty())
     return false;
-  int FixedOffset;
+  const TargetRegisterInfo *RegInfo = MF.getSubtarget().getRegisterInfo();
+
+  int FixedOffset = 0;
+  // Now that we know which registers need to be saved and restored, allocate
+  // stack slots for them.
+  for (auto &CS : CSI) {
+    unsigned Reg = CS.getReg();
+    const TargetRegisterClass *RC = RegInfo->getMinimalPhysRegClass(Reg);
+    unsigned Size = RegInfo->getSpillSize(*RC);
+    FixedOffset -= Size;
+    int FrameIdx = MFI.CreateFixedSpillStackObject(Size, FixedOffset);
+    CS.setFrameIdx(FrameIdx);
+  }
   if (AFI->isJSStub()) {
-    AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(4, -12));
-    FixedOffset = -12;
+    FixedOffset -= 4;
+    AFI->setFIJSStubMarker(MFI.CreateFixedSpillStackObject(4, FixedOffset));
     if (AFI->isWASM()) {
       // wasm instance for v8.
-      AFI->setFIWASMMarker(MFI.CreateFixedSpillStackObject(4, -16));
-      FixedOffset = -16;
-    }
-  } else {
-    AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(4, -12));
-    AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(4, -16));
-    AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(4, -20));
-    FixedOffset = -20;
-  }
-
-  for (auto &i : CSI) {
-    if (i.getReg() == ARM::LR) {
-      i.setFrameIdx(MFI.CreateFixedSpillStackObject(4, -4));
-    } else if (i.getReg() == ARM::R11) {
-      i.setFrameIdx(MFI.CreateFixedSpillStackObject(4, -8));
-    } else if (i.getReg() >= ARM::R5 && i.getReg() < ARM::R9) {
       FixedOffset -= 4;
-      i.setFrameIdx(MFI.CreateFixedSpillStackObject(4, FixedOffset));
+      AFI->setFIWASMMarker(MFI.CreateFixedSpillStackObject(4, FixedOffset));
     }
+  } else if (AFI->isJSFunction()) {
+    FixedOffset -= 4;
+    AFI->setFIContextMarker(MFI.CreateFixedSpillStackObject(4, FixedOffset));
+    FixedOffset -= 4;
+    AFI->setFIJSFunctionMarker(MFI.CreateFixedSpillStackObject(4, FixedOffset));
+    FixedOffset -= 4;
+    AFI->setFIArgsCountMarker(MFI.CreateFixedSpillStackObject(4, FixedOffset));
+  } else {
+    FixedOffset -= 4;
+    AFI->setFIDartSuspendMarker(
+        MFI.CreateFixedSpillStackObject(4, FixedOffset));
   }
 
   return true;

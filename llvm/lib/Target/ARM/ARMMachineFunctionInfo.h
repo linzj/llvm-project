@@ -141,8 +141,10 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   int FIContextMarker = -1;
   int FIArgsCountMarker = -1;
   int FIWASMMarker = -1;
+  int FIDartSuspendMarker = -1;
   bool IsJSFunction = false;
   bool IsJSStub = false;
+  bool IsDartSuspendableFunction = false;
   bool IsWASM = false;
 
   /// True if r0 will be preserved by a call to this function (e.g. C++
@@ -269,20 +271,24 @@ public:
   /// V8/Dart
   bool isJSFunction() const { return IsJSFunction; }
   bool isJSStub() const { return IsJSStub; }
+  bool isDartSuspendableFunction() const { return IsDartSuspendableFunction; }
   bool isWASM() const { return IsWASM; }
   void setJSFunction(bool s) { IsJSFunction = s; }
   void setJSStub(bool s) { IsJSStub = s; }
+  void setDartSuspendableFunction(bool s) { IsDartSuspendableFunction = s; }
   void setWASM(bool s) { IsWASM = s; }
   void setFIJSStubMarker(int FI) { FIJSStubMarker = FI; }
   void setFIJSFunctionMarker(int FI) { FIJSFunctionMarker = FI; }
   void setFIContextMarker(int FI) { FIContextMarker = FI; }
   void setFIArgsCountMarker(int FI) { FIArgsCountMarker = FI; }
   void setFIWASMMarker(int FI) { FIWASMMarker = FI; }
+  void setFIDartSuspendMarker(int FI) { FIDartSuspendMarker = FI; }
   int getFIJSStubMarker() const { return FIJSStubMarker; }
   int getFIJSFunctionMarker() const { return FIJSFunctionMarker; }
   int getFIContextMarker() const { return FIContextMarker; }
   int getFIArgsCountMarker() const { return FIArgsCountMarker; }
   int getFIWASMMarker() const { return FIWASMMarker; }
+  int getFIDartSuspendMarker() const { return FIDartSuspendMarker; }
 
   DenseMap<unsigned, unsigned> EHPrologueRemappedRegs;
 
