@@ -6367,7 +6367,7 @@ def : Pat<(i64 (anyext GPR32:$src)),
 // When we need to explicitly zero-extend, we use a 32-bit MOV instruction and
 // then assert the extension has happened.
 def : Pat<(i64 (zext GPR32:$src)),
-          (SUBREG_TO_REG (i32 0), (ORRWrs WZR, GPR32:$src, 0), sub_32)>;
+          (SUBREG_TO_REG (i32 0), GPR32:$src, sub_32)>;
 
 // To sign extend, we use a signed bitfield move instruction (SBFM) on the
 // containing super-reg.

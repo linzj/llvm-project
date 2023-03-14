@@ -4026,6 +4026,50 @@ static bool getFMAPatterns(MachineInstr &Root,
   return Found;
 }
 
+static bool getORRLSL32PatternsOp(MachineInstr &Root, MachineRegisterInfo &MRI,
+                                  int index) {
+  MachineInstr *Zext = MRI.getUniqueVRegDef(Root.getOperand(index).getReg());
+  if (!Zext->isSubregToReg())
+    return false;
+  int ShiftIndex = ((index - 1) ^ 1) + 1;
+  MachineInstr *LSL =
+      MRI.getUniqueVRegDef(Root.getOperand(ShiftIndex).getReg());
+  if (LSL->isCopy()) {
+    if (!LSL->isFullCopy())
+      return false;
+    LSL = MRI.getUniqueVRegDef(LSL->getOperand(1).getReg());
+  }
+  if (LSL->getOpcode() != AArch64::UBFMXri)
+    return false;
+  MachineOperand &Op2 = LSL->getOperand(2);
+  MachineOperand &Op3 = LSL->getOperand(3);
+  int64_t immr = Op2.getImm();
+  int64_t imms = Op3.getImm();
+  if (imms == 0x3f || ((imms + 1 != immr)))
+    return false;
+  int shift = 63 - imms;
+  if (shift < 32)
+    return false;
+  return true;
+}
+
+static bool
+getORRLSL32Patterns(MachineInstr &Root,
+                    SmallVectorImpl<MachineCombinerPattern> &Patterns) {
+  if (Root.getOpcode() != AArch64::ORRXrr)
+    return false;
+  MachineRegisterInfo &MRI = Root.getMF()->getRegInfo();
+  if (getORRLSL32PatternsOp(Root, MRI, 1)) {
+    Patterns.push_back(MachineCombinerPattern::ORRLSL32_OP1);
+    return true;
+  }
+  if (getORRLSL32PatternsOp(Root, MRI, 2)) {
+    Patterns.push_back(MachineCombinerPattern::ORRLSL32_OP2);
+    return true;
+  }
+  return false;
+}
+
 /// Return true when a code sequence can improve throughput. It
 /// should be called only for instructions in loops.
 /// \param Pattern - combiner pattern
@@ -4146,6 +4190,9 @@ bool AArch64InstrInfo::getMachineCombinerPatterns(
     return true;
   // Floating point patterns
   if (getFMAPatterns(Root, Patterns))
+    return true;
+  // ORR LSL 32
+  if (getORRLSL32Patterns(Root, Patterns))
     return true;
 
   return TargetInstrInfo::getMachineCombinerPatterns(Root, Patterns);
@@ -5189,6 +5236,32 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
                              FMAInstKind::Accumulator, &NewVR);
     }
     break;
+  }
+  case MachineCombinerPattern::ORRLSL32_OP1:
+  case MachineCombinerPattern::ORRLSL32_OP2: {
+    int ZExtIndex = static_cast<int>(Pattern) -
+                    static_cast<int>(MachineCombinerPattern::ORRLSL32_OP1) + 1;
+    Register SubToRegDef = Root.getOperand(ZExtIndex).getReg();
+    // To insert into DelInstrs.
+    DelInstrs.push_back(&Root);
+
+    int ShiftIndex = ((ZExtIndex - 1) ^ 1) + 1;
+    MachineInstr *LSL =
+        MRI.getUniqueVRegDef(Root.getOperand(ShiftIndex).getReg());
+    if (LSL->isCopy()) {
+      assert(LSL->isFullCopy());
+      LSL = MRI.getUniqueVRegDef(LSL->getOperand(1).getReg());
+    }
+    Register SubToRegDef2 = LSL->getOperand(1).getReg();
+    MachineInstr *NewInst =
+        BuildMI(MF, Root.getDebugLoc(), TII->get(AArch64::BFMXri))
+            .addDef(Root.getOperand(0).getReg())
+            .addUse(SubToRegDef)
+            .addUse(SubToRegDef2)
+            .addImm(LSL->getOperand(2).getImm())
+            .addImm(LSL->getOperand(3).getImm());
+    InsInstrs.push_back(NewInst);
+    return;
   }
   } // end switch (Pattern)
   // Record MUL and ADD/SUB for deletion

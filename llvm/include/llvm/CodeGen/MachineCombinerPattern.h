@@ -144,7 +144,11 @@ enum class MachineCombinerPattern {
   FMLSv4f32_OP1,
   FMLSv4f32_OP2,
   FMLSv4i32_indexed_OP1,
-  FMLSv4i32_indexed_OP2
+  FMLSv4i32_indexed_OP2,
+
+  // AArch64 ORR 32 bit sub with word << 32 or more
+  ORRLSL32_OP1,
+  ORRLSL32_OP2
 };
 
 } // end namespace llvm
