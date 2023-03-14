@@ -28,6 +28,7 @@ add_llvm_component_library(LLVMCodeGen
   FaultMaps.cpp
   FEntryInserter.cpp
   FinalizeISel.cpp
+  FrameElide.cpp
   FuncletLayout.cpp
   GCMetadata.cpp
   GCMetadataPrinter.cpp
