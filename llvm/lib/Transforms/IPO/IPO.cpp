@@ -22,6 +22,7 @@
 
 using namespace llvm;
 
+#if 0
 void llvm::initializeIPO(PassRegistry &Registry) {
   initializeArgPromotionPass(Registry);
   initializeCalledValuePropagationLegacyPassPass(Registry);
@@ -140,4 +141,9 @@ void LLVMAddStripDeadPrototypesPass(LLVMPassManagerRef PM) {
 
 void LLVMAddStripSymbolsPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createStripSymbolsPass());
+}
+#endif
+
+void LLVMAddFunctionInliningPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createFunctionInliningPass());
 }

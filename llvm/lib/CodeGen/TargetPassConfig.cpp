@@ -920,6 +920,7 @@ void TargetPassConfig::addMachinePasses() {
     addPass(&PostRAMachineSinkingID);
     switch (TM->getTargetTriple().getEnvironment()) {
     case Triple::V8:
+    case Triple::Dart:
       addPass(&FrameElideID);
       break;
     default:
@@ -949,7 +950,7 @@ void TargetPassConfig::addMachinePasses() {
   // Second pass scheduler.
   // Let Target optionally insert this pass by itself at some other
   // point.
-  if (getOptLevel() != CodeGenOpt::None &&
+  if (false && getOptLevel() != CodeGenOpt::None &&
       !TM->targetSchedulesPostRAScheduling()) {
     if (MISchedPostRA)
       addPass(&PostMachineSchedulerID);
@@ -1179,7 +1180,7 @@ void TargetPassConfig::addOptimizedRegAlloc() {
   addPass(&RenameIndependentSubregsID);
 
   // PreRA instruction scheduling.
-  addPass(&MachineSchedulerID);
+  // addPass(&MachineSchedulerID);
 
   if (addRegAssignmentOptimized()) {
     // Allow targets to expand pseudo instructions depending on the choice of
