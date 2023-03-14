@@ -175,7 +175,11 @@ enum AArch64MachineCombinerPattern : unsigned {
 
   GATHER_LANE_i32,
   GATHER_LANE_i16,
-  GATHER_LANE_i8
+  GATHER_LANE_i8,
+
+  // AArch64 ORR 32 bit sub with word << 32 or more
+  ORRLSL32_OP1,
+  ORRLSL32_OP2
 };
 class AArch64InstrInfo final : public AArch64GenInstrInfo {
   const AArch64RegisterInfo RI;
