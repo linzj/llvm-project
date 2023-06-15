@@ -10220,10 +10220,9 @@ def SHA256SU0rr : SHATiedInstVV<0b0010, "sha256su0",int_aarch64_crypto_sha256su0
 def : Pat<(i64 (anyext GPR32:$src)),
           (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GPR32:$src, sub_32)>;
 
-// When we need to explicitly zero-extend, the producing instruction has
-// already written the full register, so a plain SUBREG_TO_REG suffices.
+// When we need to explicitly zero-extend, we use a 32-bit MOV instruction.
 def : Pat<(i64 (zext GPR32:$src)),
-          (SUBREG_TO_REG GPR32:$src, sub_32)>;
+          (SUBREG_TO_REG (ORRWrs WZR, GPR32:$src, 0), sub_32)>;
 
 // To sign extend, we use a signed bitfield move instruction (SBFM) on the
 // containing super-reg.
