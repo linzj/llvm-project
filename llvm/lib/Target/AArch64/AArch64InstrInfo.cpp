@@ -5815,8 +5815,9 @@ void AArch64InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       MCRegister DestRegX = RI.getMatchingSuperReg(DestReg, AArch64::sub_32,
                                                    &AArch64::GPR64spRegClass);
       assert(DestRegX.isValid() && "Destination super-reg not valid");
+      // Note that wzr maybe the source.
       MCRegister SrcRegX = RI.getMatchingSuperReg(SrcReg, AArch64::sub_32,
-                                                  &AArch64::GPR64spRegClass);
+                                                  &AArch64::GPR64RegClass);
       assert(SrcRegX.isValid() && "Source super-reg not valid");
       // This instruction is reading and writing X registers.  This may upset
       // the register scavenger and machine verifier, so we need to indicate
