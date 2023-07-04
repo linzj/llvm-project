@@ -719,11 +719,39 @@ void SelectionDAGISel::SelectBasicBlock(BasicBlock::const_iterator Begin,
   // Allow creating illegal types during DAG building for the basic block.
   CurDAG->NewNodesMustHaveLegalTypes = false;
 
+  bool IsTargetingDart =
+      MF->getTarget().getTargetTriple().getEnvironment() == Triple::Dart;
   // Lower the instructions. If a call is emitted as a tail call, cease emitting
   // nodes for this block.
-  for (BasicBlock::const_iterator I = Begin; I != End && !SDB->HasTailCall; ++I) {
+  for (BasicBlock::const_iterator I = Begin; I != End && !SDB->HasTailCall;
+       ++I) {
+    bool PendingBeforeVisit =
+        IsTargetingDart && SDB->StatepointLowering.hasGCRelocateCallsPending();
     if (!ElidedArgCopyInstrs.count(&*I))
       SDB->visit(*I);
+    bool PendingAfterVisit =
+        IsTargetingDart && SDB->StatepointLowering.hasGCRelocateCallsPending();
+    bool ShallSplit = PendingBeforeVisit && !PendingAfterVisit;
+    if (ShallSplit) {
+      CurDAG->setRoot(SDB->getControlRoot());
+      SDB->resolveOrClearDbgInfo();
+      SDB->clear();
+
+      // Final step, emit the lowered DAG as machine code.
+      CodeGenAndEmitDAG();
+      // Fallback to the other MBB.
+      MachineBasicBlock *CurBB = FuncInfo->MBB;
+      MachineFunction::iterator BBI(CurBB);
+      MachineFunction &MF = CurDAG->getMachineFunction();
+      MachineBasicBlock *TmpBB =
+          MF.CreateMachineBasicBlock(CurBB->getBasicBlock());
+      MF.insert(++BBI, TmpBB);
+      TmpBB->transferSuccessors(CurBB);
+      CurBB->addSuccessor(TmpBB);
+      // Reset the new BB.
+      FuncInfo->MBB = TmpBB;
+      FuncInfo->InsertPt = TmpBB->begin();
+    }
   }
 
   // Make sure the root of the DAG is up-to-date.

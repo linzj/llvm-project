@@ -875,12 +875,18 @@ SelectionDAGBuilder::LowerStatepoint(ImmutableStatepoint ISP,
   SI.EHPadBB = EHPadBB;
 
   SDValue ReturnValue = LowerAsSTATEPOINT(SI);
+  bool IsTargetingDart =
+      DAG.getMachineFunction().getTarget().getTargetTriple().getEnvironment() ==
+      Triple::Dart;
 
   // Export the result value if needed
   const GCResultInst *GCResult = ISP.getGCResult();
   Type *RetTy = ISP.getActualReturnType();
   if (!RetTy->isVoidTy() && GCResult) {
-    if (GCResult->getParent() != ISP.getCall()->getParent()) {
+    // Dart always split after the state point call, so the result must in
+    // different basic block.
+    if (IsTargetingDart ||
+        GCResult->getParent() != ISP.getCall()->getParent()) {
       // Result value will be used in a different basic block so we need to
       // export it now.  Default exporting mechanism will not work here because
       // statepoint call has a different type than the actual call. It means
@@ -956,7 +962,12 @@ void SelectionDAGBuilder::visitGCResult(const GCResultInst &CI) {
   // call.  We've already emitted this, so just grab the value.
   const Instruction *I = CI.getStatepoint();
 
-  if (I->getParent() != CI.getParent()) {
+  bool IsTargetingDart =
+      DAG.getMachineFunction().getTarget().getTargetTriple().getEnvironment() ==
+      Triple::Dart;
+  // Dart always split after the state point call, so the result must in
+  // different basic block.
+  if (IsTargetingDart || I->getParent() != CI.getParent()) {
     // Statepoint is in different basic block so we should have stored call
     // result in a virtual register.
     // We can not use default getValue() functionality to copy value from this
