@@ -1094,9 +1094,6 @@ SelectionDAGBuilder::LowerStatepoint(const GCStatepointInst &I,
   SI.EHPadBB = EHPadBB;
 
   SDValue ReturnValue = LowerAsSTATEPOINT(SI);
-  bool IsTargetingDart =
-      DAG.getMachineFunction().getTarget().getTargetTriple().getEnvironment() ==
-      Triple::Dart;
 
   // Export the result value if needed
   if (!GCResultLocality.first && !GCResultLocality.second) {
@@ -1106,16 +1103,14 @@ SelectionDAGBuilder::LowerStatepoint(const GCStatepointInst &I,
     return;
   }
 
-  // Dart always splits after the state point call, so the result must be
-  // treated as if it were used in a different basic block.
-  if (GCResultLocality.first && !IsTargetingDart) {
+  if (GCResultLocality.first) {
     // Result value will be used in a same basic block. Don't export it or
     // perform any explicit register copies. The gc_result will simply grab
     // this value. 
     setValue(&I, ReturnValue);
   }
 
-  if (!GCResultLocality.second && !IsTargetingDart)
+  if (!GCResultLocality.second)
     return;
   // Result value will be used in a different basic block so we need to export
   // it now.  Default exporting mechanism will not work here because statepoint
@@ -1125,9 +1120,7 @@ SelectionDAGBuilder::LowerStatepoint(const GCStatepointInst &I,
   // manually.
   // TODO: To eliminate this problem we can remove gc.result intrinsics
   //       completely and make statepoint call to return a tuple.
-  Type *RetTy = (GCResultLocality.second ? GCResultLocality.second
-                                         : GCResultLocality.first)
-                    ->getType();
+  Type *RetTy = GCResultLocality.second->getType();
   Register Reg = FuncInfo.CreateRegs(RetTy);
   RegsForValue RFV(*DAG.getContext(), DAG.getTargetLoweringInfo(),
                    DAG.getDataLayout(), Reg, RetTy,
@@ -1191,13 +1184,7 @@ void SelectionDAGBuilder::visitGCResult(const GCResultInst &CI) {
   if (isa<UndefValue>(SI))
     return;
 
-  bool IsTargetingDart =
-      DAG.getMachineFunction().getTarget().getTargetTriple().getEnvironment() ==
-      Triple::Dart;
-  // Dart always splits after the state point call, so the result must be in a
-  // different basic block.
-  if (!IsTargetingDart &&
-      cast<GCStatepointInst>(SI)->getParent() == CI.getParent()) {
+  if (cast<GCStatepointInst>(SI)->getParent() == CI.getParent()) {
     setValue(&CI, getValue(SI));
     return;
   }
