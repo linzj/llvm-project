@@ -578,6 +578,9 @@ LLVM_ABI FunctionPass *createBreakFalseDepsLegacyPass();
 // This pass expands indirectbr instructions.
 LLVM_ABI FunctionPass *createIndirectBrExpandPass();
 
+/// This pass splits the calls to statepoint.
+LLVM_ABI FunctionPass *createSplitStatepointBlockPass();
+
 /// Remove the operands from state points.
 
 /// Creates CFI Fixup pass. \see CFIFixup.cpp
