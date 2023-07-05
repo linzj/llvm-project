@@ -420,6 +420,8 @@ namespace llvm {
   /// protect against stack-based overflow vulnerabilities.
   FunctionPass *createSafeStackPass();
 
+  /// This pass splits the calls to statepoint.
+  FunctionPass *createSplitStatepointBlockPass();
   /// This pass detects subregister lanes in a virtual register that are used
   /// independently of other lanes and splits them into separate virtual
   /// registers.

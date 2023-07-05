@@ -369,6 +369,7 @@ void initializeSCEVAAWrapperPassPass(PassRegistry&);
 void initializeSLPVectorizerPass(PassRegistry&);
 void initializeSROALegacyPassPass(PassRegistry&);
 void initializeSafeStackLegacyPassPass(PassRegistry&);
+void initializeSplitStatepointBlockLegacyPassPass(PassRegistry&);
 void initializeSafepointIRVerifierPass(PassRegistry&);
 void initializeSampleProfileLoaderLegacyPassPass(PassRegistry&);
 void initializeModuleSanitizerCoverageLegacyPassPass(PassRegistry &);
