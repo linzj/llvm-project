@@ -45,18 +45,15 @@ using namespace llvm;
 /// isUsedOutsideOfDefiningBlock - Return true if this instruction is used by
 /// PHI nodes or outside of the basic block that defines it, or used by a
 /// switch or atomic instruction, which may expand to multiple basic blocks.
-static bool isUsedOutsideOfDefiningBlock(const Instruction *I,
-                                         bool IsTargetingDart) {
-  if (I->use_empty())
-    return false;
-  if (isa<PHINode>(I))
-    return true;
+static bool isUsedOutsideOfDefiningBlock(const Instruction *I) {
+  if (I->use_empty()) return false;
+  if (isa<PHINode>(I)) return true;
   const BasicBlock *BB = I->getParent();
   for (const User *U : I->users())
     if (cast<Instruction>(U)->getParent() != BB || isa<PHINode>(U))
       return true;
 
-  return IsTargetingDart;
+  return false;
 }
 
 static ISD::NodeType getPreferredExtendForValue(const Value *V) {
@@ -129,9 +126,6 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
     WasmEHFuncInfo &EHInfo = *MF->getWasmEHFuncInfo();
     calculateWasmEHInfo(&fn, EHInfo);
   }
-
-  bool IsTargetingDart =
-      MF->getTarget().getTargetTriple().getEnvironment() == Triple::Dart;
 
   // Initialize the mapping of values to registers.  This is only set up for
   // instruction values that are used outside of the block that defines
@@ -228,7 +222,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
 
       // Mark values used outside their block as exported, by allocating
       // a virtual register for them.
-      if (isUsedOutsideOfDefiningBlock(&I, IsTargetingDart))
+      if (isUsedOutsideOfDefiningBlock(&I))
         if (!isa<AllocaInst>(I) || !StaticAllocaMap.count(cast<AllocaInst>(&I)))
           InitializeRegForValue(&I);
 

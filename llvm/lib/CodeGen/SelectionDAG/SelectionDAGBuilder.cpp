@@ -10146,9 +10146,6 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
 
   SmallVector<SDValue, 4> Chains;
   DenseMap<int, int> ArgCopyElisionFrameIndexMap;
-  bool IsTargetingDart =
-      DAG.getMachineFunction().getTarget().getTargetTriple().getEnvironment() ==
-      Triple::Dart;
   for (const Argument &Arg : F.args()) {
     SmallVector<SDValue, 4> ArgValues;
     SmallVector<EVT, 4> ValueVTs;
@@ -10263,10 +10260,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
         continue;
       }
     }
-    // Dart always split after the state point call, so the result must in
-    // different basic block.
-    if (IsTargetingDart ||
-        !isOnlyUsedInEntryBlock(&Arg, TM.Options.EnableFastISel)) {
+    if (!isOnlyUsedInEntryBlock(&Arg, TM.Options.EnableFastISel)) {
       FuncInfo->InitializeRegForValue(&Arg);
       SDB->CopyToExportRegsIfNeeded(&Arg);
     }

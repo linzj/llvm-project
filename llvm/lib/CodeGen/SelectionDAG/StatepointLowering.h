@@ -105,10 +105,6 @@ public:
     return AllocatedStackSlots.test(Offset);
   }
 
-  bool hasGCRelocateCallsPending() const {
-    return !PendingGCRelocateCalls.empty();
-  }
-
 private:
   /// Maps pre-relocation value (gc pointer directly incoming into statepoint)
   /// into it's location (currently only stack slots)
