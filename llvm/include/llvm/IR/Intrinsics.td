@@ -424,7 +424,7 @@ def int_objc_arc_annotation_bottomup_bbend  : Intrinsic<[],
 //
 def int_returnaddress : Intrinsic<[llvm_ptr_ty], [llvm_i32_ty], [IntrNoMem, ImmArg<0>]>;
 def int_addressofreturnaddress : Intrinsic<[llvm_anyptr_ty], [], [IntrNoMem]>;
-def int_frameaddress : Intrinsic<[llvm_anyptr_ty], [llvm_i32_ty], [IntrNoMem, ImmArg<0>]>;
+def int_frameaddress : Intrinsic<[llvm_anyptr_ty], [llvm_i32_ty], [ImmArg<0>]>;
 def int_sponentry  : Intrinsic<[llvm_anyptr_ty], [], [IntrNoMem]>;
 def int_read_register  : Intrinsic<[llvm_anyint_ty], [llvm_metadata_ty],
                                    [IntrReadMem], "llvm.read_register">;
