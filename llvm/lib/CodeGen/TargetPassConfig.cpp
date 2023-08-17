@@ -1145,8 +1145,8 @@ void TargetPassConfig::addMachinePasses() {
     addPass(createRegUsageInfoPropPass());
 
   if (getOptimizeRegAlloc()) {
-    addPass(createStatepointSimplifyPass());
     addPass(&OptimizePHIsLegacyID);
+    addPass(createStatepointSimplifyPass());
   }
   // Run pre-ra passes.
   addPreRegAlloc();
