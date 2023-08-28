@@ -63,6 +63,8 @@ private:
 
   bool removeVarFromStatepoint(MachineFunction &MF, MachineInstr *MI);
 
+  void addStatepointObservedRecursive(Register r);
+
   MachineRegisterInfo *MRI;
   const TargetInstrInfo *TII;
 };
@@ -90,6 +92,14 @@ private:
   VirtRegMap *VRM;
   MachineRegisterInfo *MRI;
 };
+
+static MachineInstr *getSingleDef(const MachineRegisterInfo &MRI,
+                                  Register Reg) {
+  if (!MRI.hasOneDef(Reg))
+    return nullptr;
+  auto defs_iterator = MRI.def_begin(Reg);
+  return defs_iterator->getParent();
+}
 } // end of anonymous namespace
 
 INITIALIZE_PASS(StatepointSimplify, DEBUG_TYPE, "Statepoint Simplify", false,
@@ -165,17 +175,31 @@ bool StatepointSimplify::removeVarFromStatepoint(MachineFunction &MF,
     return false;
 
   bool Changed = false;
+
   for (unsigned i = StatePoint->getNumOperands() - 1; i >= StartIdx; --i) {
     MachineOperand &MO = StatePoint->getOperand(i);
     if (!MO.isReg() || Register::isPhysicalRegister(MO.getReg())) {
       continue;
     }
-    MRI->addStatepointObserved(MO.getReg());
+    addStatepointObservedRecursive(MO.getReg());
     StatePoint->RemoveOperand(i);
     Changed = true;
   }
 
   return Changed;
+}
+
+void StatepointSimplify::addStatepointObservedRecursive(Register r) {
+  MRI->addStatepointObserved(r);
+  MachineInstr *DefMI = getSingleDef(*MRI, r);
+  if (!DefMI)
+    return;
+  if (!DefMI->isFullCopy())
+    return;
+  Register SrcReg = DefMI->getOperand(1).getReg();
+  if (MRI->isStatepointObserved(SrcReg))
+    return;
+  addStatepointObservedRecursive(SrcReg);
 }
 
 #undef DEBUG_TYPE
