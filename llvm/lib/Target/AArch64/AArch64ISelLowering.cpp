@@ -9626,6 +9626,27 @@ AArch64TargetLowering::getScratchRegisters(CallingConv::ID) const {
 bool
 AArch64TargetLowering::isDesirableToCommuteWithShift(const SDNode *N,
                                                      CombineLevel Level) const {
+  // If shift are used in the pattern
+  // load (add t0, (shl x, c0))
+  // we will return false.
+  if (N->hasOneUse() && (isa<ConstantSDNode>(N->getOperand(0)) ||
+                         isa<ConstantSDNode>(N->getOperand(1)))) {
+    SDNode *User = *N->use_begin();
+    unsigned LevelCount = 0;
+    while (LevelCount < 2 &&
+           (User->getOpcode() == ISD::ADD || User->getOpcode() == ISD::SUB ||
+            User->getOpcode() == ISD::ZERO_EXTEND) &&
+           User->hasOneUse()) {
+      SDNode *Load = *User->use_begin();
+      if (Load->getOpcode() == ISD::LOAD || Load->getOpcode() == ISD::STORE)
+        return false;
+      User = Load;
+    }
+    // CopyToReg means export, let's be conservative.
+    if (User->getOpcode() == ISD::CopyToReg)
+      return false;
+  }
+
   N = N->getOperand(0).getNode();
   EVT VT = N->getValueType(0);
     // If N is unsigned bit extraction: ((x >> C) & mask), then do not combine
@@ -9638,6 +9659,48 @@ AArch64TargetLowering::isDesirableToCommuteWithShift(const SDNode *N,
       isa<ConstantSDNode>(N->getOperand(0)->getOperand(1)))
       return false;
   }
+  return true;
+}
+
+bool AArch64TargetLowering::shouldFoldConstantShiftPairToMask(
+    const SDNode *N, CombineLevel Level) const {
+  assert(((N->getOpcode() == ISD::SHL &&
+           N->getOperand(0).getOpcode() == ISD::SRL) ||
+          (N->getOpcode() == ISD::SRL &&
+           N->getOperand(0).getOpcode() == ISD::SHL)) &&
+         "Expected shift-shift mask");
+  // Don't allow multiuse shift folding with the same shift amount.
+  if (!N->getOperand(0)->hasOneUse())
+    return false;
+
+  // If shift are used in the pattern
+  // load (add t0, (shift x, c0))
+  // we will return false.
+  if (N->hasOneUse() && isa<ConstantSDNode>(N->getOperand(1))) {
+    SDNode *User = *N->use_begin();
+    unsigned LevelCount = 0;
+    while (LevelCount < 2 &&
+           (User->getOpcode() == ISD::ADD || User->getOpcode() == ISD::SUB ||
+            User->getOpcode() == ISD::ZERO_EXTEND) &&
+           User->hasOneUse()) {
+      SDNode *Load = *User->use_begin();
+      if (Load->getOpcode() == ISD::LOAD || Load->getOpcode() == ISD::STORE)
+        return false;
+      User = Load;
+    }
+    // CopyToReg means export, let's be conservative.
+    if (User->getOpcode() == ISD::CopyToReg)
+      return false;
+  }
+
+  // Only fold srl(shl(x,c1),c2) iff C1 >= C2 to prevent loss of UBFX patterns.
+  EVT VT = N->getValueType(0);
+  if (N->getOpcode() == ISD::SRL && (VT == MVT::i32 || VT == MVT::i64)) {
+    auto *C1 = dyn_cast<ConstantSDNode>(N->getOperand(0).getOperand(1));
+    auto *C2 = dyn_cast<ConstantSDNode>(N->getOperand(1));
+    return (!C1 || !C2 || C1->getZExtValue() >= C2->getZExtValue());
+  }
+
   return true;
 }
 
