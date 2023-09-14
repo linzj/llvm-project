@@ -20107,6 +20107,27 @@ AArch64TargetLowering::isDesirableToCommuteWithShift(const SDNode *N,
           N->getOpcode() == ISD::SRL) &&
          "Expected shift op");
 
+  // If shift are used in the pattern
+  // load (add t0, (shl x, c0))
+  // we will return false.
+  if (N->hasOneUse() && (isa<ConstantSDNode>(N->getOperand(0)) ||
+                         isa<ConstantSDNode>(N->getOperand(1)))) {
+    SDNode *User = *N->user_begin();
+    unsigned LevelCount = 0;
+    while (LevelCount < 2 &&
+           (User->getOpcode() == ISD::ADD || User->getOpcode() == ISD::SUB ||
+            User->getOpcode() == ISD::ZERO_EXTEND) &&
+           User->hasOneUse()) {
+      SDNode *Load = *User->user_begin();
+      if (Load->getOpcode() == ISD::LOAD || Load->getOpcode() == ISD::STORE)
+        return false;
+      User = Load;
+    }
+    // CopyToReg means export, let's be conservative.
+    if (User->getOpcode() == ISD::CopyToReg)
+      return false;
+  }
+
   SDValue ShiftLHS = N->getOperand(0);
   EVT VT = N->getValueType(0);
 
@@ -20172,6 +20193,26 @@ bool AArch64TargetLowering::shouldFoldConstantShiftPairToMask(
   // Don't allow multiuse shift folding with the same shift amount.
   if (!N->getOperand(0)->hasOneUse())
     return false;
+
+  // If shift are used in the pattern
+  // load (add t0, (shift x, c0))
+  // we will return false.
+  if (N->hasOneUse() && isa<ConstantSDNode>(N->getOperand(1))) {
+    SDNode *User = *N->user_begin();
+    unsigned LevelCount = 0;
+    while (LevelCount < 2 &&
+           (User->getOpcode() == ISD::ADD || User->getOpcode() == ISD::SUB ||
+            User->getOpcode() == ISD::ZERO_EXTEND) &&
+           User->hasOneUse()) {
+      SDNode *Load = *User->user_begin();
+      if (Load->getOpcode() == ISD::LOAD || Load->getOpcode() == ISD::STORE)
+        return false;
+      User = Load;
+    }
+    // CopyToReg means export, let's be conservative.
+    if (User->getOpcode() == ISD::CopyToReg)
+      return false;
+  }
 
   // Only fold srl(shl(x,c1),c2) iff C1 >= C2 to prevent loss of UBFX patterns.
   EVT VT = N->getValueType(0);
