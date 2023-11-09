@@ -1331,6 +1331,10 @@ def UMSUBLrrr : WideMulAccum<1, 0b101, "umsubl", sub, zext>;
 
 def : Pat<(i64 (mul (sext GPR32:$Rn), (sext GPR32:$Rm))),
           (SMADDLrrr GPR32:$Rn, GPR32:$Rm, XZR)>;
+def : Pat<(i64 (mul (sext_inreg GPR64:$Rn, i32), (sext GPR32:$Rm))),
+          (SMADDLrrr (EXTRACT_SUBREG $Rn, sub_32), $Rm, XZR)>;
+def : Pat<(i64 (mul (sext GPR32:$Rn), (sext GPR32:$Rm))),
+          (SMADDLrrr GPR32:$Rn, GPR32:$Rm, XZR)>;
 def : Pat<(i64 (mul (zext GPR32:$Rn), (zext GPR32:$Rm))),
           (UMADDLrrr GPR32:$Rn, GPR32:$Rm, XZR)>;
 
