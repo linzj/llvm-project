@@ -909,6 +909,7 @@ SelectionDAGBuilder::LowerStatepoint(ImmutableStatepoint ISP,
     // The token value is never used from here on, just generate a poison value
     setValue(ISP.getInstruction(), DAG.getIntPtrConstant(-1, getCurSDLoc()));
   }
+  FuncInfo.MF->getFrameInfo().setHasPatchPoint();
 }
 
 void SelectionDAGBuilder::LowerCallSiteWithDeoptBundleImpl(
