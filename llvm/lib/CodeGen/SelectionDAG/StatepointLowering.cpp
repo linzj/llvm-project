@@ -1130,6 +1130,7 @@ SelectionDAGBuilder::LowerStatepoint(const GCStatepointInst &I,
   RFV.getCopyToRegs(ReturnValue, DAG, getCurSDLoc(), Chain, nullptr);
   PendingExports.push_back(Chain);
   FuncInfo.ValueMap[&I] = Reg;
+  FuncInfo.MF->getFrameInfo().setHasPatchPoint();
 }
 
 void SelectionDAGBuilder::LowerCallSiteWithDeoptBundleImpl(
