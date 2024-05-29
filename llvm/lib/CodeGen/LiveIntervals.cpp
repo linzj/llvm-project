@@ -949,6 +949,15 @@ LiveIntervals::addSegmentToEndOfBlock(Register Reg, MachineInstr &startInst) {
   return S;
 }
 
+static bool IsRegDefAsSubReg(Register Reg, const MachineRegisterInfo &MRI) {
+
+  for (const auto &MO : MRI.def_operands(Reg)) {
+    if (MO.getSubReg())
+      return true;
+  }
+  return false;
+}
+
 //===----------------------------------------------------------------------===//
 //                          Register mask functions
 //===----------------------------------------------------------------------===//
@@ -989,9 +998,11 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
 
   bool Found = false;
   // Remove usable registers are pointers if InterferenceWithNonTagged flag
-  // is set.
+  // is set, or def as sub reg.
   // FIXME:(zuojian) Maybe I should check the loop, and starts from the SlotI.
-  if (IsV8CC && !MRI->isStatepointObserved(LI.reg())) {
+  if (IsV8CC &&
+      (!MRI->isStatepointObserved(LI.reg()) ||
+       IsRegDefAsSubReg(LI.reg(), *MRI))) {
     ArrayRef<SlotIndex> Slots = getRegMaskSlots();
     ArrayRef<const uint32_t *> Bits = getRegMaskBits();
     for (auto SlotI = Slots.begin(), SlotE = Slots.end(); SlotI != SlotE;
