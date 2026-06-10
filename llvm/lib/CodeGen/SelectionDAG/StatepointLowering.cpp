@@ -770,6 +770,20 @@ SDValue SelectionDAGBuilder::LowerAsSTATEPOINT(
   // Add register mask from call node
   Ops.push_back(*RegMaskIt);
 
+  const uint32_t *CSRInterferenceMask = nullptr;
+  // Record the exact callsite CSR interference mask out-of-band. It is an
+  // allocation constraint for LiveIntervals, not a real instruction regmask.
+  if (auto *CB = dyn_cast<CallBase>(SI.StatepointInstr)) {
+    Attribute CSRInterfereAttr = CB->getAttribute(AttributeList::FunctionIndex,
+                                                  "csr-interferes-non-tagged");
+    if (CSRInterfereAttr.isStringAttribute()) {
+      const TargetRegisterInfo *TRI = DAG.getSubtarget().getRegisterInfo();
+      MachineFunction &MF = DAG.getMachineFunction();
+      CSRInterferenceMask =
+          TRI->UpdateRegMask(MF, CSRInterfereAttr.getValueAsString());
+    }
+  }
+
   // Add chain
   Ops.push_back(Chain);
 
@@ -782,8 +796,11 @@ SDValue SelectionDAGBuilder::LowerAsSTATEPOINT(
   SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
 
   MachineSDNode *StatepointMCNode =
-    DAG.getMachineNode(TargetOpcode::STATEPOINT, getCurSDLoc(), NodeTys, Ops);
+      DAG.getMachineNode(TargetOpcode::STATEPOINT, getCurSDLoc(), NodeTys, Ops);
   DAG.setNodeMemRefs(StatepointMCNode, MemRefs);
+  if (CSRInterferenceMask)
+    DAG.getMachineFunction().setStatepointCSRInterferenceMask(
+        StatepointMCNode, CSRInterferenceMask);
 
   SDNode *SinkNode = StatepointMCNode;
 

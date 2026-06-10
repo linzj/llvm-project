@@ -941,29 +941,32 @@ bool LiveIntervals::checkRegMaskInterference(LiveInterval &LI,
   // FIXME:(zuojian) Maybe I should check the loop, and starts from the SlotI.
   if (IsV8CC &&
       (!MRI->isStatepointObserved(LI.reg) || IsRegDefAsSubReg(LI.reg, *MRI))) {
-    ArrayRef<SlotIndex> Slots = getRegMaskSlots();
-    ArrayRef<const uint32_t *> Bits = getRegMaskBits();
-    for (auto SlotI = Slots.begin(), SlotE = Slots.end(); SlotI != SlotE;
-         ++SlotI) {
-      const SlotIndex &Index = *SlotI;
-      MachineInstr *MI = Indexes->getInstructionFromIndex(Index);
-      // MI maybe nullptr for Bits may come from MBB's BeginClobberMask.
-      if (MI && MI->getOpcode() == TargetOpcode::STATEPOINT) {
-        StatepointOpers Op(MI);
+    for (const MachineBasicBlock &MBB : *MF) {
+      for (const MachineInstr &MI : MBB) {
+        if (MI.getOpcode() != TargetOpcode::STATEPOINT)
+          continue;
+
+        StatepointOpers Op(&MI);
         const int64_t flags =
-            MI->getOperand(Op.getVarIdx() + StatepointOpers::FlagsOffset)
+            MI.getOperand(Op.getVarIdx() + StatepointOpers::FlagsOffset)
                 .getImm();
-        if (flags &
-            static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged)) {
-          if (!Found) {
-            UsableRegs.clear();
-            UsableRegs.resize(TRI->getNumRegs(), true);
-            Found = true;
-          }
-          UsableRegs.clearBitsInMask(Bits[SlotI - Slots.begin()]);
-          LLVM_DEBUG(dbgs() << "Apply interference for reg: "
-                            << printReg(LI.reg, TRI) << "\n");
+        if (!(flags &
+              static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged)))
+          continue;
+
+        const uint32_t *InterfereMask =
+            MF->getStatepointCSRInterferenceMask(&MI);
+        if (!InterfereMask)
+          continue;
+
+        if (!Found) {
+          UsableRegs.clear();
+          UsableRegs.resize(TRI->getNumRegs(), true);
+          Found = true;
         }
+        UsableRegs.clearBitsInMask(InterfereMask);
+        LLVM_DEBUG(dbgs() << "Apply CSR interference for reg: "
+                          << printReg(LI.reg, TRI) << "\n");
       }
     }
 

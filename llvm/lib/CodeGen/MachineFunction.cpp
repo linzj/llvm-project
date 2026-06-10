@@ -146,6 +146,7 @@ void MachineFunction::handleInsertion(MachineInstr &MI) {
 }
 
 void MachineFunction::handleRemoval(MachineInstr &MI) {
+  StatepointCSRInterferenceMasks.erase(&MI);
   if (TheDelegate)
     TheDelegate->MF_HandleRemoval(MI);
 }
@@ -224,6 +225,8 @@ void MachineFunction::clear() {
   BasicBlockRecycler.clear(Allocator);
   CodeViewAnnotations.clear();
   VariableDbgInfos.clear();
+  StatepointSDNodeCSRInterferenceMasks.clear();
+  StatepointCSRInterferenceMasks.clear();
   if (RegInfo) {
     RegInfo->~MachineRegisterInfo();
     Allocator.Deallocate(RegInfo);
@@ -484,8 +487,32 @@ uint32_t *MachineFunction::allocateRegMask() {
   return Mask;
 }
 
+void MachineFunction::setStatepointCSRInterferenceMask(const SDNode *Node,
+                                                       const uint32_t *Mask) {
+  assert(Node && "missing statepoint SDNode");
+  assert(Mask && "missing CSR interference mask");
+  StatepointSDNodeCSRInterferenceMasks[Node] = Mask;
+}
+
+void MachineFunction::transferStatepointCSRInterferenceMask(
+    const SDNode *Node, const MachineInstr *MI) {
+  auto It = StatepointSDNodeCSRInterferenceMasks.find(Node);
+  if (It == StatepointSDNodeCSRInterferenceMasks.end())
+    return;
+
+  assert(MI && "missing statepoint MI");
+  StatepointCSRInterferenceMasks[MI] = It->second;
+  StatepointSDNodeCSRInterferenceMasks.erase(It);
+}
+
+const uint32_t *MachineFunction::getStatepointCSRInterferenceMask(
+    const MachineInstr *MI) const {
+  auto It = StatepointCSRInterferenceMasks.find(MI);
+  return It == StatepointCSRInterferenceMasks.end() ? nullptr : It->second;
+}
+
 ArrayRef<int> MachineFunction::allocateShuffleMask(ArrayRef<int> Mask) {
-  int* AllocMask = Allocator.Allocate<int>(Mask.size());
+  int *AllocMask = Allocator.Allocate<int>(Mask.size());
   copy(Mask, AllocMask);
   return {AllocMask, Mask.size()};
 }

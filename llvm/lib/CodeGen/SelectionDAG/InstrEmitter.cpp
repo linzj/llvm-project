@@ -907,6 +907,8 @@ EmitMachineNode(SDNode *Node, bool IsClone, bool IsCloned,
   // Set the memory reference descriptions of this instruction now that it is
   // part of the function.
   MIB.setMemRefs(cast<MachineSDNode>(Node)->memoperands());
+  if (Node->getMachineOpcode() == TargetOpcode::STATEPOINT)
+    MF->transferStatepointCSRInterferenceMask(Node, MIB.getInstr());
 
   // Insert the instruction into position in the block. This needs to
   // happen before any custom inserter hook is called so that the
