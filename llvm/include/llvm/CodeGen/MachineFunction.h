@@ -68,6 +68,7 @@ class MCSection;
 class Pass;
 class PseudoSourceValueManager;
 class raw_ostream;
+class SDNode;
 class SlotIndexes;
 class StringRef;
 class MCRegisterClass;
@@ -556,6 +557,11 @@ private:
 
   /// Map a call instruction to call site arguments forwarding info.
   CallSiteInfoMap CallSitesInfo;
+
+  DenseMap<const SDNode *, const uint32_t *>
+      StatepointSDNodeCSRInterferenceMasks;
+  DenseMap<const MachineInstr *, const uint32_t *>
+      StatepointCSRInterferenceMasks;
 
   /// A helper function that returns call site info for a give call
   /// instruction if debug entry value support is enabled.
@@ -1220,6 +1226,13 @@ public:
 
   /// Allocate and initialize a register mask with @p NumRegister bits.
   uint32_t *allocateRegMask();
+
+  void setStatepointCSRInterferenceMask(const SDNode *Node,
+                                        const uint32_t *Mask);
+  void transferStatepointCSRInterferenceMask(const SDNode *Node,
+                                             const MachineInstr *MI);
+  const uint32_t *
+  getStatepointCSRInterferenceMask(const MachineInstr *MI) const;
 
   ArrayRef<int> allocateShuffleMask(ArrayRef<int> Mask);
 
