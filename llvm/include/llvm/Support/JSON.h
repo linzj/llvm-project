@@ -524,6 +524,7 @@ private:
 
 LLVM_ABI bool operator==(const Value &, const Value &);
 inline bool operator!=(const Value &L, const Value &R) { return !(L == R); }
+inline bool operator!=(const Value &L, const Value &R) { return !(L == R); }
 
 // Array Methods
 inline Value &Array::operator[](size_t I) { return V[I]; }
