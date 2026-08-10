@@ -4594,6 +4594,21 @@ SDValue AArch64TargetLowering::LowerGlobalAddress(SDValue Op,
     // Handle dart global address lowering.
     SDLoc DL(GN);
     EVT PtrVT = getPointerTy(DAG.getDataLayout());
+    // Pinned sentinel globals: the null object and the object pool live
+    // permanently in reserved registers and never move. The Dart frontend
+    // models them as globals so RewriteStatepointsForGC treats them as
+    // Constants (never recorded/relocated in statepoint stack maps); here
+    // they lower back to plain register reads.
+    StringRef Name = GV->getName();
+    if (Name == "pinned_null_object" || Name == "pinned_object_pool") {
+      unsigned Reg =
+          Name == "pinned_null_object" ? AArch64::X22 : AArch64::X27;
+      SDValue Result = DAG.getCopyFromReg(DAG.getEntryNode(), DL, Reg, PtrVT);
+      if (int64_t NodeOffset = GN->getOffset())
+        Result = DAG.getNode(ISD::ADD, DL, PtrVT, Result,
+                             DAG.getConstant(NodeOffset, DL, PtrVT));
+      return Result;
+    }
     SDValue PP = DAG.getRegister(AArch64::X27, PtrVT);
     const uint64_t Offset = strtoull(GV->getName().str().c_str(), nullptr, 16);
     if (Offset) {

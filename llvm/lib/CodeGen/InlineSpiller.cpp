@@ -1083,6 +1083,7 @@ void InlineSpiller::spillAll() {
   for (unsigned Reg : RegsToSpill)
     StackInt->MergeSegmentsInAsValue(LIS.getInterval(Reg),
                                      StackInt->getValNumInfo(0));
+
   LLVM_DEBUG(dbgs() << "Merged spilled regs: " << *StackInt << '\n');
 
   // Spill around uses of all RegsToSpill.
@@ -1156,6 +1157,15 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
   VNInfo *VNI = StackIntvl.getValNumInfo(0);
   SlotIndexes *Indexes = LIS.getSlotIndexes();
 
+  // Blocks containing a store to the slot, and blocks whose exit may be
+  // reached by some store (forward may-reach dataflow). The backward
+  // liveness flood below must not extend the interval onto paths no store
+  // can reach: the slot is uninitialized there, and StatepointRewrite would
+  // otherwise report it in stack maps, making the GC visit garbage (e.g. a
+  // suspended async frame copied into a SuspendState).
+  BitVector HasStore(MF.getNumBlockIDs());
+  BitVector InitOut(MF.getNumBlockIDs());
+
   auto ScanFIToBuildWorkList = [&]() {
     for (MachineFunction::iterator MBBI = MF.begin(), E = MF.end(); MBBI != E;
          ++MBBI) {
@@ -1175,12 +1185,31 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
           SlotIndex Idx = Indexes->getInstructionIndex(MI);
           if (TII.isStoreToStackSlot(MI, FI)) {
             // It's a def.
+            HasStore.set(MBB->getNumber());
             NewLR.addSegment(LiveRange::Segment(Idx, Idx.getDeadSlot(), VNI));
             continue;
           }
           // It's a use.
           WorkList.emplace_back(Idx);
         }
+      }
+    }
+  };
+
+  auto ComputeInitOut = [&]() {
+    SmallVector<const MachineBasicBlock *, 16> InitWork;
+    for (const MachineBasicBlock &MBB : MF)
+      if (HasStore.test(MBB.getNumber())) {
+        InitOut.set(MBB.getNumber());
+        InitWork.push_back(&MBB);
+      }
+    while (!InitWork.empty()) {
+      const MachineBasicBlock *MBB = InitWork.pop_back_val();
+      for (const MachineBasicBlock *Succ : MBB->successors()) {
+        if (InitOut.test(Succ->getNumber()))
+          continue;
+        InitOut.set(Succ->getNumber());
+        InitWork.push_back(Succ);
       }
     }
   };
@@ -1198,10 +1227,23 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
       if (NewLR.extendInBlock(BlockStart, Idx)) {
         continue;
       }
+      // The value can only be live-in to MBB along predecessors some store
+      // reaches; on other paths the slot is uninitialized and must not be
+      // part of the interval.
+      bool AnyInitPred = false;
+      for (const MachineBasicBlock *Pred : MBB->predecessors())
+        if (InitOut.test(Pred->getNumber())) {
+          AnyInitPred = true;
+          break;
+        }
+      if (!AnyInitPred)
+        continue;
       // VNI is live-in to MBB.
       NewLR.addSegment(LiveRange::Segment(BlockStart, Idx, VNI));
-      // Make sure VNI is live-out from the predecessors.
+      // Make sure VNI is live-out from the initialized predecessors.
       for (const MachineBasicBlock *Pred : MBB->predecessors()) {
+        if (!InitOut.test(Pred->getNumber()))
+          continue;
         if (!LiveOut.insert(Pred).second)
           continue;
         SlotIndex Stop = Indexes->getMBBEndIdx(Pred);
@@ -1210,6 +1252,7 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
     }
   };
   ScanFIToBuildWorkList();
+  ComputeInitOut();
   ExtendSegmentsToUses();
   StackIntvl.segments.swap(NewLR.segments);
 }
