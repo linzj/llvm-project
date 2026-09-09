@@ -200,6 +200,9 @@ namespace {
     /// Join compatible live intervals
     void joinAllIntervals();
 
+    /// Close the statepoint-observed marking into a "must be tagged" fixpoint.
+    void propagateStatepointObserved();
+
     /// Coalesce copies in the specified MBB, putting
     /// copies that cannot yet be coalesced into WorkList.
     void copyCoalesceInMBB(MachineBasicBlock *MBB);
@@ -1915,6 +1918,29 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
     deleteInstr(CopyMI);
     return true;
   }
+
+  // Do not coalesce a statepoint-observed register with a non-observed one.
+  //
+  // The observed flag records whether a register holds a tagged Dart object or
+  // a raw, unboxed value, and it is the only oracle the V8CC statepoint
+  // pipeline has for telling the two apart. Three separate decisions read it:
+  // whether the register may live in an extra CSR (x10-x13) across a
+  // statepoint (LiveIntervals::checkRegMaskInterference), whether its spill
+  // slot is scanned by the GC (InlineSpiller::spillAll), and whether it is
+  // re-attached to the statepoint's gc operand list (StatepointRewrite).
+  //
+  // Joining two registers that disagree on the flag yields one register that
+  // carries a tagged value on one path and a raw value on another, which none
+  // of those three decisions can describe. syncStatepointObserved() below
+  // unions the flag to "observed", so the raw value inherits permission to sit
+  // in x10-x13 across a statepoint; the allocation stub spills those CSRs into
+  // its frame and the GC then scans the spill slot as an object root and
+  // faults on the raw payload. Clearing the flag instead is no better -- the
+  // tagged value would silently lose GC tracking. Keep the two kinds of value
+  // in separate registers.
+  if (!CP.isPhys() && MRI->isStatepointObserved(CP.getSrcReg()) !=
+                          MRI->isStatepointObserved(CP.getDstReg()))
+    return false;
 
   // Enforce policies.
   if (CP.isPhys()) {
@@ -3917,6 +3943,95 @@ void RegisterCoalescer::releaseMemory() {
   LargeLIVisitCounter.clear();
 }
 
+// Close the statepoint-observed marking into a "must be tagged" fixpoint.
+//
+// StatepointSimplify seeds the flag from the gc operand list of every
+// statepoint and then walks backwards through full copies only
+// (StatepointMachinePasses.cpp removeVarFromStatepoint /
+// addStatepointObservedRecursive), so the flag really means "is a gc operand,
+// or a single-def full-copy ancestor of one" -- a strict subset of the values
+// that hold a Dart object. PHIElimination then widens the gap:
+// PHIElimination::LowerPHINode rewrites every PHI into copies through a fresh
+// IncomingReg (createVirtualRegister) that carries no flag at all.
+//
+// That matters because joinCopy() refuses to coalesce an observed register with
+// a non-observed one, to keep a raw value from inheriting permission to sit in
+// x10-x13 across a statepoint. Against the sparse flag that rule cannot tell a
+// genuine tagged/raw pair from two tagged values one of which simply was never
+// marked, so it also splits the PHI copies of every tagged loop-carried value.
+// Measured over the whole app that was 22% of all join attempts and cost 5.1%
+// of code size, concentrated in loop-heavy functions (_BigIntImpl._binaryGcd
+// grew 9.2x). Closing the marking first drops that to 2.3% and 0.53%.
+//
+// The rule below only ever concludes that a register must hold a tagged value,
+// so it cannot launder a raw one: if every def of X is a full copy that really
+// moves the value of an already-observed register, then every value X can hold
+// is a value some statepoint called an object. Requiring *all* defs is what
+// makes this safe for the multi-def registers PHIElimination introduces.
+//
+// "Really moves" is the reason for the two undef checks. This runs after
+// ProcessImplicitDefs (TargetPassConfig::addOptimizedRegAlloc), which leaves
+// behind copies whose source is undefined; those move garbage rather than the
+// source's tagged value. eliminateUndefCopy() recognises them two ways -- an
+// undef flag on the source operand, or a source that is simply not live at the
+// copy -- so both have to be excluded here. The seed-side walk needs neither
+// check because StatepointSimplify runs before ProcessImplicitDefs, where such
+// copies do not exist yet.
+//
+// The symmetric backward rule (X observed and single-def via `X = COPY Y`, with
+// Y single-def too, implies Y is tagged) is sound but was measured to fire zero
+// times across 226k functions -- after PHI elimination the source of such a
+// copy is essentially always the multi-def IncomingReg -- so it is not
+// implemented.
+void RegisterCoalescer::propagateStatepointObserved() {
+  SmallVector<Register, 32> ObservedRegs;
+  for (unsigned i = 0, e = MRI->getNumVirtRegs(); i != e; ++i) {
+    Register R = Register::index2VirtReg(i);
+    if (!MRI->reg_nodbg_empty(R) && MRI->isStatepointObserved(R))
+      ObservedRegs.push_back(R);
+  }
+
+  // True when MI is a full copy that actually transfers the value of an
+  // observed virtual register, rather than an undef.
+  auto IsCopyOfObservedValue = [&](const MachineInstr &MI) {
+    if (!MI.isFullCopy())
+      return false;
+    const MachineOperand &SrcMO = MI.getOperand(1);
+    if (SrcMO.isUndef())
+      return false;
+    Register Src = SrcMO.getReg();
+    if (!Src.isVirtual() || !MRI->isStatepointObserved(Src))
+      return false;
+    if (!LIS->hasInterval(Src))
+      return false;
+    return LIS->getInterval(Src).liveAt(LIS->getInstructionIndex(MI));
+  };
+
+  auto AllDefsFromObserved = [&](Register D) {
+    bool AnyDef = false;
+    for (MachineInstr &MI : MRI->def_instructions(D)) {
+      AnyDef = true;
+      if (!IsCopyOfObservedValue(MI))
+        return false;
+    }
+    return AnyDef;
+  };
+
+  while (!ObservedRegs.empty()) {
+    Register R = ObservedRegs.pop_back_val();
+    for (MachineInstr &MI : MRI->use_nodbg_instructions(R)) {
+      if (!MI.isFullCopy() || MI.getOperand(1).getReg() != R)
+        continue;
+      Register D = MI.getOperand(0).getReg();
+      if (!D.isVirtual() || MRI->isStatepointObserved(D) ||
+          !AllDefsFromObserved(D))
+        continue;
+      MRI->addStatepointObserved(D);
+      ObservedRegs.push_back(D);
+    }
+  }
+}
+
 bool RegisterCoalescer::runOnMachineFunction(MachineFunction &fn) {
   MF = &fn;
   MRI = &fn.getRegInfo();
@@ -3947,6 +4062,8 @@ bool RegisterCoalescer::runOnMachineFunction(MachineFunction &fn) {
   buildVRegToDbgValueMap(fn);
 
   RegClassInfo.runOnMachineFunction(fn);
+
+  propagateStatepointObserved();
 
   // Join (coalesce) intervals if requested.
   if (EnableJoining)
