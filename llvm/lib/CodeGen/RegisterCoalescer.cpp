@@ -304,6 +304,9 @@ class RegisterCoalescer : private LiveRangeEdit::Delegate {
   /// Return true if a copy involving a physreg should be joined.
   bool canJoinPhys(const CoalescerPair &CP);
 
+  /// Return true if a copy involving a virtreg should be joined.
+  bool canJoinVirt(const CoalescerPair &CP);
+
   /// Replace all defs and uses of SrcReg to DstReg and update the subregister
   /// number if it is not zero. If DstReg is a physical register and the
   /// existing subregister number of the def / use being updated is not zero,
@@ -2044,10 +2047,6 @@ void RegisterCoalescer::setUndefOnPrunedSubRegUses(LiveInterval &LI,
   // liveness in the program IR.
   LIS->shrinkToUses(&LI);
 }
-
-bool RegisterCoalescer::joinCopy(
-    MachineInstr *CopyMI, bool &Again,
-    SmallPtrSetImpl<MachineInstr *> &CurrentErasedInstrs) {
 bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
   // The goal is to filter out the copy from reserved phys.
   LiveInterval &JoinVInt = LIS->getInterval(CP.getDstReg());
@@ -2071,7 +2070,9 @@ bool RegisterCoalescer::canJoinVirt(const CoalescerPair &CP) {
   return false;
 }
 
-bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
+bool RegisterCoalescer::joinCopy(
+    MachineInstr *CopyMI, bool &Again,
+    SmallPtrSetImpl<MachineInstr *> &CurrentErasedInstrs) {
   Again = false;
   LLVM_DEBUG(dbgs() << LIS->getInstructionIndex(*CopyMI) << '\t' << *CopyMI);
 
