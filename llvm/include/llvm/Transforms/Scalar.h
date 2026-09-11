@@ -22,6 +22,7 @@ namespace llvm {
 
 class Function;
 class FunctionPass;
+class ModulePass;
 class Pass;
 
 //===----------------------------------------------------------------------===//
@@ -59,6 +60,12 @@ LLVM_ABI Pass *createLICMPass();
 // a loop's canonical induction variable as one of their indices.
 //
 LLVM_ABI Pass *createLoopStrengthReducePass();
+
+//===----------------------------------------------------------------------===//
+//
+// RewriteStatepointsForGC - Make relocations explicit at statepoints.
+//
+LLVM_ABI ModulePass *createRewriteStatepointsForGCLegacyPass();
 
 //===----------------------------------------------------------------------===//
 //

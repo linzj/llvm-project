@@ -54,12 +54,16 @@
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/InitializePasses.h"
+#include "llvm/Pass.h"
+#include "llvm/PassRegistry.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
@@ -159,6 +163,64 @@ PreservedAnalyses RewriteStatepointsForGC::run(Module &M,
   PA.preserve<TargetIRAnalysis>();
   PA.preserve<TargetLibraryAnalysis>();
   return PA;
+}
+
+namespace {
+
+struct RewriteStatepointsForGCLegacyPass : public ModulePass {
+  static char ID;
+
+  RewriteStatepointsForGCLegacyPass() : ModulePass(ID) {
+    initializeRewriteStatepointsForGCLegacyPassPass(
+        *PassRegistry::getPassRegistry());
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<DominatorTreeWrapperPass>();
+    AU.addRequired<TargetTransformInfoWrapperPass>();
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+  }
+
+  bool runOnModule(Module &M) override {
+    bool Changed = false;
+    RewriteStatepointsForGC Impl;
+    for (Function &F : M) {
+      // Nothing to do for declarations.
+      if (F.isDeclaration() || F.empty())
+        continue;
+
+      // Policy choice says not to rewrite - the most common reason is that
+      // we're compiling code without a GCStrategy.
+      if (!shouldRewriteStatepointsIn(F))
+        continue;
+
+      auto &DT = getAnalysis<DominatorTreeWrapperPass>(F).getDomTree();
+      auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>(F).getTTI(F);
+      auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+      Changed |= Impl.runOnFunction(F, DT, TTI, TLI);
+    }
+    if (Changed)
+      stripNonValidData(M);
+    return Changed;
+  }
+};
+
+char RewriteStatepointsForGCLegacyPass::ID = 0;
+
+} // end anonymous namespace
+
+INITIALIZE_PASS_BEGIN(RewriteStatepointsForGCLegacyPass,
+                      "rewrite-statepoints-for-gc",
+                      "Make relocations explicit at statepoints", false, false)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_END(RewriteStatepointsForGCLegacyPass,
+                    "rewrite-statepoints-for-gc",
+                    "Make relocations explicit at statepoints", false, false)
+
+ModulePass *llvm::createRewriteStatepointsForGCLegacyPass() {
+  return new RewriteStatepointsForGCLegacyPass();
 }
 
 namespace {

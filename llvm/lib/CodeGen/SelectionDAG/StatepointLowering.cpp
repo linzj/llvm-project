@@ -1029,19 +1029,7 @@ SelectionDAGBuilder::LowerStatepoint(const GCStatepointInst &I,
          "GCStrategy does not expect to encounter statepoints");
 #endif
 
-  SDValue ActualCallee;
-  SDValue Callee = getValue(I.getActualCalledOperand());
-
-  if (I.getNumPatchBytes() > 0) {
-    // If we've been asked to emit a nop sequence instead of a call instruction
-    // for this statepoint then don't lower the call target, but use a constant
-    // `undef` instead.  Not lowering the call target lets statepoint clients
-    // get away without providing a physical address for the symbolic call
-    // target at link time.
-    ActualCallee = DAG.getUNDEF(Callee.getValueType());
-  } else {
-    ActualCallee = Callee;
-  }
+  SDValue ActualCallee = getValue(I.getActualCalledOperand());
 
   const auto GCResultLocality = getGCResultLocality(I);
   AttributeSet retAttrs;

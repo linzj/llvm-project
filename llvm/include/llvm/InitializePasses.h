@@ -281,6 +281,7 @@ LLVM_ABI void initializeRegUsageInfoCollectorLegacyPass(PassRegistry &);
 LLVM_ABI void initializeRegUsageInfoPropagationLegacyPass(PassRegistry &);
 LLVM_ABI void initializeRegionInfoPassPass(PassRegistry &);
 LLVM_ABI void initializeRegionOnlyPrinterPass(PassRegistry &);
+LLVM_ABI void initializeRewriteStatepointsForGCLegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeRegionOnlyViewerPass(PassRegistry &);
 LLVM_ABI void initializeRegionPrinterPass(PassRegistry &);
 LLVM_ABI void initializeRegionViewerPass(PassRegistry &);
