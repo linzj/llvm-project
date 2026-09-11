@@ -313,11 +313,13 @@ private:
 
   bool hasVirtRegAlloc();
   BlockFrequency calcBlockSplitCost();
-  bool addSplitConstraints(InterferenceCache::Cursor, BlockFrequency &);
+  bool addSplitConstraints(InterferenceCache::Cursor, BlockFrequency &,
+                           BlockFrequency &);
   bool addThroughConstraints(InterferenceCache::Cursor, ArrayRef<unsigned>);
   bool growRegion(GlobalSplitCandidate &Cand);
   BlockFrequency calcGlobalSplitCost(GlobalSplitCandidate &,
-                                     const AllocationOrder &Order);
+                                     const AllocationOrder &Order,
+                                     BlockFrequency &);
   bool calcCompactRegion(GlobalSplitCandidate &);
   void splitAroundRegion(LiveRangeEdit &, ArrayRef<unsigned>);
   void calcGapWeights(MCRegister, SmallVectorImpl<float> &);
@@ -340,7 +342,8 @@ private:
                                              AllocationOrder &Order,
                                              BlockFrequency &BestCost,
                                              unsigned &NumCands,
-                                             unsigned &BestCand);
+                                             unsigned &BestCand,
+                                             BlockFrequency &BestRepeatedSpillCost);
   /// Calculate cost of region splitting.
   unsigned calculateRegionSplitCost(const LiveInterval &VirtReg,
                                     AllocationOrder &Order,

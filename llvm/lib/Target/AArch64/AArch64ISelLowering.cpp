@@ -26837,7 +26837,7 @@ static SDValue combineV3I8LoadExt(LoadSDNode *LD, SelectionDAG &DAG) {
 static int anchorOffset(int Offset, unsigned Size) {
   if (isInt<9>(Offset))
     return 0;
-  int Scale = countTrailingZeros(Size);
+  int Scale = countr_zero(Size);
   if (isUIntN(Scale + 12, Offset) && (Offset == ((Offset >> Scale) << Scale)))
     return 0;
   // Ignore those constants can be defined in one instruction.
@@ -26866,7 +26866,8 @@ static bool legalizedAddress(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
   if (!C)
     return false;
 
-  unsigned Size = dyn_cast<MemSDNode>(N)->getMemOperand()->getSize();
+  unsigned Size =
+      (unsigned)dyn_cast<MemSDNode>(N)->getMemOperand()->getSize().getValue().getFixedValue();
   int BaseOffset = anchorOffset(C->getSExtValue(), Size);
   if (BaseOffset == 0)
     return false;
