@@ -638,7 +638,17 @@ bool MachineCombiner::combineInstructions(MachineBasicBlock *MBB) {
         }
       }
 
-      if (ML && TII->isThroughputPattern(P)) {
+      // BUGFIX llvm23-orrlsl32-combiner: the fork's ORR+LSL#32 -> BFM pattern
+      // used to fire because the generic AArch64 CPU had no scheduling model
+      // and doSubstitute() replaced unconditionally. LLVM 23's generic CPU
+      // carries the Cortex-A510 model and doSubstitute() is gone, leaving
+      // only the loop-throughput, OptForSize (1 inserted vs 1 deleted: no)
+      // and critical-path (tied BFM latency 2 > ORR 1) routes, so the pattern
+      // never fired: 336k bfi became 177k bfi + 146k orr + 32k lsl of the
+      // heap base, with the lsl spilled and reloaded across calls. Let the
+      // target declare such patterns always profitable.
+      if ((ML && TII->isThroughputPattern(P)) ||
+          TII->isAlwaysProfitablePattern(P)) {
         LLVM_DEBUG(dbgs() << "\t Replacing due to throughput pattern in loop\n");
         insertDeleteInstructions(MBB, MI, InsInstrs, DelInstrs, TraceEnsemble,
                                  RegUnits, TII, P, IncrementalUpdate);

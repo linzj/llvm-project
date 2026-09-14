@@ -1333,6 +1333,14 @@ public:
   /// \param Pattern - combiner pattern
   virtual bool isThroughputPattern(unsigned Pattern) const;
 
+  /// Return true when a combiner pattern is a strict improvement whatever the
+  /// scheduling model says (same or fewer instructions, no new dependencies),
+  /// so MachineCombiner applies it without the critical-path check.
+  /// \param Pattern - combiner pattern
+  virtual bool isAlwaysProfitablePattern(unsigned Pattern) const {
+    return false;
+  }
+
   /// Return the objective of a combiner pattern.
   /// \param Pattern - combiner pattern
   virtual CombinerObjective getCombinerObjective(unsigned Pattern) const;

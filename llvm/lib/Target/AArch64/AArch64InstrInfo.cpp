@@ -8246,6 +8246,19 @@ static bool getFNEGPatterns(MachineInstr &Root,
 /// Return true when a code sequence can improve throughput. It
 /// should be called only for instructions in loops.
 /// \param Pattern - combiner pattern
+/// ORR + (LSL #32 of a 64-bit value) -> BFM is one instruction for one and
+/// lets the shifted value die (see BUGFIX llvm23-orrlsl32-combiner in
+/// MachineCombiner.cpp); it needs no scheduling-model justification.
+bool AArch64InstrInfo::isAlwaysProfitablePattern(unsigned Pattern) const {
+  switch (Pattern) {
+  case AArch64MachineCombinerPattern::ORRLSL32_OP1:
+  case AArch64MachineCombinerPattern::ORRLSL32_OP2:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool AArch64InstrInfo::isThroughputPattern(unsigned Pattern) const {
   switch (Pattern) {
   default:

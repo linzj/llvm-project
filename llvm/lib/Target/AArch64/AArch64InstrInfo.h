@@ -463,6 +463,7 @@ public:
   /// should be called only for instructions in loops.
   /// \param Pattern - combiner pattern
   bool isThroughputPattern(unsigned Pattern) const override;
+  bool isAlwaysProfitablePattern(unsigned Pattern) const override;
   /// Return true when there is potentially a faster code sequence
   /// for an instruction chain ending in ``Root``. All potential patterns are
   /// listed in the ``Patterns`` array.

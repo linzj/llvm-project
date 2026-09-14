@@ -389,41 +389,44 @@ public:
     for (const auto &Def : MI.defs())
       GCRegs.insert(Def.getReg());
 
-    // BUGFIX llvm23-fixup-preserve-all-stub: the spill decision used the
-    // function's calling convention mask, so a gc pointer in a caller-saved
-    // register across a V8 *shared stub* call (the stub pushes every register,
-    // preserves them all, and the Dart stack map's register bits let the
-    // collector update the pushed copies) was spilled to a fresh slot and its
-    // record rewritten to that slot. The slot then gets updated, but the code
-    // after the call keeps using the register -- which the stub restored from
-    // its own push copy, no longer described by any record. Measured in
-    // JpegEncoder.encode: "mov x14, x20; stp x20, x10, [sp, #0x58]; bl
-    // StackOverflowShared...; stp x0, x14, [fp, #-0x38]" -- x14 came back
-    // stale and was written into the loop's slot, SEGV_ACCERR later.
-    // A register the statepoint's own mask preserves stays a register record
-    // when that mask preserves the register's whole class (a register-pushing
-    // stub); masks that preserve only some registers (the extra CSRs of a
-    // Dart call, the AAPCS set of a C call) keep the spill, which the callee
-    // side handles by scanning its saved-register slots.
+    // BUGFIX llvm23-fixup-v8cc-preserved-regs: this pass was added with the
+    // LLVM 23 port (the LLVM 10 fork had no such pass; StatepointRewrite
+    // emitted register records for whatever the allocator left in a
+    // register). It decides "callee saved" from getCallPreservedMask of the
+    // calling convention, which for V8CC is only LR/FP, so a gc value the
+    // allocator keeps in an extra CSR (x10-x13, added to every V8 call's own
+    // regmask by UpdateCustomCallPreservedMask) was spilled to a slot at
+    // *every* call site: the same register stored to the same slot before
+    // each bl. Measured on the same app.dill: 261k -> 1,079k pre-call stores
+    // of x10-x13, most of the +13.6% .text over LLVM 10. Worse, a gc value in
+    // a caller-saved register across a register-pushing shared stub was
+    // spilled and its record moved to the slot; the slot got updated but the
+    // code after the call kept using the register, which the stub restored
+    // from its own (unrecorded) push copy -- JpegEncoder.encode: "mov x14,
+    // x20; stp x20, x10, [sp, #0x58]; bl StackOverflowShared...; stp x0, x14,
+    // [fp, #-0x38]" came back stale, SEGV_ACCERR later.
+    //
+    // Every register a V8CC callee preserves is visible to the collector on
+    // the callee side: LLVM frames mark their CSR save slots unconditionally
+    // (llvm_code_assembler.cc RecordSafePoint "csr always marked"),
+    // Dart-backend frames AddCSR (flow_graph_compiler_arm64.cc), exit frames
+    // scan fp[-1..-4] (stack_frame.cc first_fixed -= kCSRCount), and a
+    // register-pushing stub's push area is described by the caller's register
+    // bits. So for a V8CC statepoint a record in any register that the
+    // statepoint's *own* regmask preserves stays a register record; the
+    // assembler only consumes register bits at shared-stub call sites and
+    // ignores them elsewhere. Non-V8CC statepoints keep the upstream rule.
     const uint32_t *InstrMask = nullptr;
     for (const MachineOperand &MO : MI.operands())
       if (MO.isRegMask()) {
         InstrMask = MO.getRegMask();
         break;
       }
-    const MachineRegisterInfo &MRI = MI.getMF()->getRegInfo();
     auto InMask = [&](MCRegister R) {
       return InstrMask && ((InstrMask[R.id() / 32] >> (R.id() % 32)) & 1);
     };
-    auto PreservedByRegisterPushingStub = [&](Register Reg) {
-      if (!InMask(Reg))
-        return false;
-      const TargetRegisterClass *RC = TRI.getMinimalPhysRegClass(Reg);
-      for (MCPhysReg R : *RC)
-        if (!MRI.isReserved(R) && !InMask(R))
-          return false;
-      return true;
-    };
+    const bool IsV8CC =
+        StatepointOpers(&MI).getCallingConv() == CallingConv::V8CC;
 
     SmallSet<Register, 8> VisitedRegs;
     for (unsigned Idx = StatepointOpers(&MI).getVarIdx(),
@@ -437,7 +440,7 @@ public:
 
       if (isCalleeSaved(Reg) && (AllowGCPtrInCSR || !GCRegs.contains(Reg)))
         continue;
-      if (PreservedByRegisterPushingStub(Reg) && !GCRegs.contains(Reg))
+      if (IsV8CC && InMask(Reg) && !GCRegs.contains(Reg))
         continue;
 
       LLVM_DEBUG(dbgs() << "Will spill " << printReg(Reg, &TRI) << " at index "
