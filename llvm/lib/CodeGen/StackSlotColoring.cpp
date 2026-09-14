@@ -316,10 +316,42 @@ int StackSlotColoring::ColorSlot(LiveInterval *li) {
 
   if (!DisableSharing) {
 
+    // BUGFIX llvm23-statepoint-slot-share: never merge a statepoint spill slot
+    // with an ordinary one. StatepointRewrite records the *pre-coloring* frame
+    // index of every gc root and this pass then remaps it, so a shared slot is
+    // reported to the GC at every pc where EITHER value is live per LiveStacks.
+    // Any inaccuracy in those intervals (see InlineSpiller's
+    // shrinkStackIntervalToUse) then hands the GC whatever the other value left
+    // behind -- observed as e.g. 0x808100008081, two packed compressed nulls
+    // read back as one tagged pointer.
+    //
+    // BUGFIX llvm23-statepoint-slot-collide: and never share a statepoint spill
+    // slot with *another statepoint spill slot* either. InlineSpiller's
+    // shrinkStackIntervalToUse() deliberately narrows the LiveStacks interval
+    // of exactly these slots (so that the stack maps stop reporting a slot the
+    // function has not written yet), and this pass decides that two slots may
+    // share a colour by asking those same intervals whether they overlap.
+    // Shrunk intervals look disjoint when the values are in fact both live, so
+    // the merge silently drops values: a PHI-resolution parallel copy then
+    // compiles to a run of stores that all target one slot
+    //
+    //     stur x0,  [x29, #-0x40]     ; loaded from [x15, #0x1c0]
+    //     stur x1,  [x29, #-0x40]     ; loaded from [x15, #0x1a0]
+    //     stur x25, [x29, #-0x40]     ; loaded from [x15, #0x1a8]
+    //
+    // where two of the three values are lost and the two frame slots that
+    // should have received them keep stale contents that the stack map still
+    // reports to the GC. A scan of the vmservice snapshot finds 42 such blocks
+    // (one of them 15 stores deep); with -no-stack-slot-sharing there are none.
+    const bool IsStatepointFI = MFI->isStatepointSpillSlotObjectIndex(FI);
+    if (IsStatepointFI)
+      Share = false;
+
     // Check if it's possible to reuse any of the used colors.
     Color = UsedColors[StackID].find_first();
-    while (Color != -1) {
-      if (!Assignments[Color].overlaps(li)) {
+    while (!IsStatepointFI && Color != -1) {
+      if (!Assignments[Color].overlaps(li) &&
+          !MFI->isStatepointSpillSlotObjectIndex(Color)) {
         Share = true;
         ++NumEliminated;
         break;

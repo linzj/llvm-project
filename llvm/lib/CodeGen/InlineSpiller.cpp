@@ -1409,8 +1409,16 @@ void InlineSpiller::spillAll() {
   if (Original != Edit->getReg())
     VRM.assignVirt2StackSlot(Edit->getReg(), StackSlot);
 
-  if (MRI.isStatepointObserved(Original))
+  if (MRI.isStatepointObserved(Original)) {
     MF.getFrameInfo().markAsStatepointSpillSlotObjectIndex(StackSlot);
+    // BUGFIX llvm23-statepoint-slot-uninit: every slot that will be reported to
+    // the GC must go through shrinkStackIntervalToUse(), otherwise its interval
+    // stays the union of the spilled vregs' *register* live ranges and covers
+    // paths where the slot was never written. Observed in
+    // _Future._propagateToListeners: stack-map bits set for frame slots the
+    // function never references at all, handing the GC 0x1/0x5/0x8081.
+    StackSlotNeedToShrink.insert(StackSlot);
+  }
 
   assert(StackInt->getNumValNums() == 1 && "Bad stack interval values");
   for (Register Reg : RegsToSpill)
@@ -1519,14 +1527,29 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
           if (FI != Slot)
             continue;
           SlotIndex Idx = Indexes->getInstructionIndex(MI);
-          if (TII.isStoreToStackSlot(MI, FI)) {
+          // BUGFIX llvm23-shrink-paired-store: isStoreToStackSlot() only
+          // recognises single-register stores. LLVM 23 happily emits paired
+          // spills (`stp x17, x19, [x29, #-0x48]`), which this loop would then
+          // classify as *uses*, leaving HasStore/InitOut clear for the block.
+          // The backward flood below then refuses to extend the interval and
+          // real live ranges disappear from the stack maps -- measured as a 36%
+          // drop in reported roots (85,136 -> 54,975) and a sharp rise in
+          // dangling-pointer crashes. Treat anything that touches the slot and
+          // is not provably a reload as a def.
+          int LoadFI = 0;
+          const bool IsPureLoad =
+              TII.isLoadFromStackSlot(MI, LoadFI) && LoadFI == FI;
+          if (!IsPureLoad) {
             // It's a def.
             HasStore.set(MBB->getNumber());
             NewLR.addSegment(LiveRange::Segment(Idx, Idx.getDeadSlot(), VNI));
             continue;
           }
-          // It's a use.
-          WorkList.emplace_back(Idx);
+          // BUGFIX llvm-spill-slot-hole: normalise the use to its dead slot
+          // here, so every work list entry is already the exact index the
+          // segment must reach. Block-end indices pushed by
+          // ExtendSegmentsToUses must not be shifted again.
+          WorkList.emplace_back(Idx.getDeadSlot());
         }
       }
     }
@@ -1560,12 +1583,28 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
       const MachineBasicBlock *MBB =
           Indexes->getMBBFromIndex(Idx.getPrevSlot());
       SlotIndex BlockStart = Indexes->getMBBStartIdx(MBB);
+      // BUGFIX llvm-spill-slot-hole: Idx must be used verbatim (upstream
+      // extendSegmentsToUses does the same). A block-end index equals the
+      // successor's start index, so getDeadSlot() on it lands inside the
+      // successor: extendInBlock() then matches the segment just added for
+      // the successor, reports the value as already live and returns, so the
+      // predecessor's store segment is never extended and the range gets a
+      // hole. StackSlotColoring reads these LiveStacks intervals, so a hole
+      // makes two simultaneously live slots look disjoint and they are merged
+      // onto one frame index -- two values spilled to one address.
       if (NewLR.extendInBlock(BlockStart, Idx)) {
         continue;
       }
       // The value can only be live-in to MBB along predecessors some store
       // reaches; on other paths the slot is uninitialized and must not be
       // part of the interval.
+      //
+      // NOTE: this stays *may*-reach on purpose. Requiring every predecessor
+      // makes LiveStacks disagree with the actual loads and the machine
+      // verifier reports "instruction loads from dead spill slot" (a PHI
+      // self-copy legitimately reads a slot that is undefined on one edge).
+      // The must-reach rule belongs at stack-map *reporting* time instead --
+      // see StatepointRewrite.
       bool AnyInitPred = false;
       for (const MachineBasicBlock *Pred : MBB->predecessors())
         if (InitOut.test(Pred->getNumber())) {

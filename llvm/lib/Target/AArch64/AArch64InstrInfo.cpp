@@ -1588,6 +1588,48 @@ bool AArch64InstrInfo::areMemAccessesTriviallyDisjoint(
   return false;
 }
 
+// BUGFIX llvm23-statepoint-undef-slot: replace an IMPLICIT_DEF of a general
+// purpose register with an explicit zero (orr Xd, xzr, xzr), so that a spill of
+// that register cannot hand the Dart GC an arbitrary bit pattern through a
+// statepoint stack map. See TargetInstrInfo::makeImplicitDefGCSafe.
+bool AArch64InstrInfo::makeImplicitDefGCSafe(MachineInstr &MI) const {
+  if (!MI.isImplicitDef() || MI.getNumOperands() != 1)
+    return false;
+  const MachineOperand &Def = MI.getOperand(0);
+  if (!Def.isReg() || !Def.getReg().isVirtual() || Def.getSubReg())
+    return false;
+  MachineRegisterInfo &MRI = MI.getMF()->getRegInfo();
+  const TargetRegisterClass *RC = MRI.getRegClass(Def.getReg());
+  unsigned Opc;
+  Register Zero;
+  // ORRXrs/ORRWrs define GPR64/GPR32, so only accept register classes that the
+  // instruction can legally define. The *all* classes (GPR64all/GPR32all) show
+  // up on register-allocator-created IMPLICIT_DEFs that feed plain COPYs; they
+  // can be narrowed, and they do carry Dart object references, so narrow them
+  // rather than leaving an undefined value behind. GPR64sp and friends keep the
+  // IMPLICIT_DEF.
+  if (AArch64::GPR64RegClass.hasSubClassEq(RC)) {
+    Opc = AArch64::ORRXrs;
+    Zero = AArch64::XZR;
+  } else if (AArch64::GPR32RegClass.hasSubClassEq(RC)) {
+    Opc = AArch64::ORRWrs;
+    Zero = AArch64::WZR;
+  } else if (AArch64::GPR64allRegClass.hasSubClassEq(RC) &&
+             MRI.constrainRegClass(Def.getReg(), &AArch64::GPR64RegClass)) {
+    Opc = AArch64::ORRXrs;
+    Zero = AArch64::XZR;
+  } else if (AArch64::GPR32allRegClass.hasSubClassEq(RC) &&
+             MRI.constrainRegClass(Def.getReg(), &AArch64::GPR32RegClass)) {
+    Opc = AArch64::ORRWrs;
+    Zero = AArch64::WZR;
+  } else {
+    return false;
+  }
+  MI.setDesc(get(Opc));
+  MachineInstrBuilder(*MI.getMF(), MI).addReg(Zero).addReg(Zero).addImm(0);
+  return true;
+}
+
 bool AArch64InstrInfo::isSchedulingBoundary(const MachineInstr &MI,
                                             const MachineBasicBlock *MBB,
                                             const MachineFunction &MF) const {

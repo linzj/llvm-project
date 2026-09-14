@@ -1247,6 +1247,28 @@ public:
   /// has the potential of causing nasty silent breakage in out-of-tree targets.
   virtual bool isSubregFoldable() const { return false; }
 
+  /// BUGFIX llvm23-statepoint-undef-slot: turn an IMPLICIT_DEF into a
+  /// definition of a value that is safe for a garbage collector to inspect
+  /// (an integer zero, which Dart reads as the Smi 0).
+  ///
+  /// LLVM 10's SplitEditor::defFromParent() used a full lane mask whenever the
+  /// register had no subranges, so a split of a dead parent value became a
+  /// COPY. LLVM 23 asks getLiveLaneMaskAt() instead and emits an IMPLICIT_DEF
+  /// when the parent is not live at the split point. That is fine for LLVM --
+  /// nothing reads the value -- but the spiller still stores the register into
+  /// its stack slot, and the statepoint stack map reports that slot to the GC,
+  /// which then dereferences whatever the register allocator happened to leave
+  /// in the physical register. Materialising a zero keeps the undefined
+  /// semantics while making the slot harmless to scan.
+  ///
+  /// Returns true if \p MI was rewritten in place.
+  virtual bool makeImplicitDefGCSafe(MachineInstr &MI) const { return false; }
+
+  /// A physical register that always reads as integer zero, for materialising a
+  /// GC-safe (Smi 0) value into a frame slot. Register() if the target has
+  /// none.
+  virtual Register getGCSafeZeroReg() const { return Register(); }
+
   /// For a patchpoint, stackmap, or statepoint intrinsic, return the range of
   /// operands which can't be folded into stack references. Operands outside
   /// of the range are most likely foldable but it is not guaranteed.

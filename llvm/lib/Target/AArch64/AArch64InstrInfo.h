@@ -385,6 +385,11 @@ public:
   // with subreg operands to foldMemoryOperandImpl.
   bool isSubregFoldable() const override { return true; }
 
+  /// BUGFIX llvm23-statepoint-undef-slot: see TargetInstrInfo.
+  bool makeImplicitDefGCSafe(MachineInstr &MI) const override;
+
+  Register getGCSafeZeroReg() const override { return AArch64::XZR; }
+
   using TargetInstrInfo::foldMemoryOperandImpl;
   MachineInstr *foldMemoryOperandImpl(MachineFunction &MF, MachineInstr &MI,
                                       ArrayRef<unsigned> Ops, int FrameIndex,
