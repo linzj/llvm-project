@@ -957,6 +957,12 @@ bool ShrinkWrapImpl::performShrinkWrapping(
 }
 
 bool ShrinkWrapImpl::run(MachineFunction &MF) {
+  // Body-deleted functions (see LLVMDeleteFunctionBody) reach emission as
+  // completely empty machine functions; nothing to shrink-wrap, and the
+  // downstream BFI queries would crash on the empty block list.
+  if (MF.empty())
+    return false;
+
   LLVM_DEBUG(dbgs() << "**** Analysing " << MF.getName() << '\n');
 
   init(MF);

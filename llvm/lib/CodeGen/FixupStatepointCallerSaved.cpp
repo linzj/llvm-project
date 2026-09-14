@@ -120,6 +120,21 @@ static Register performCopyPropagation(Register Reg,
     return Reg;
   }
 
+  // A register preserved by the statepoint's own register mask (for example
+  // an extra-CSR register of the V8 calling convention) stays live across the
+  // call and may legally be used after the STATEPOINT. For such registers the
+  // spill is not a kill and a defining COPY must not be removed.
+  const uint32_t *InstrMask = nullptr;
+  for (const MachineOperand &MO : RI->operands())
+    if (MO.isRegMask()) {
+      InstrMask = MO.getRegMask();
+      break;
+    }
+  const bool PreservedByStatepoint =
+      InstrMask && ((InstrMask[Reg.id() / 32] >> (Reg.id() % 32)) & 1);
+  if (PreservedByStatepoint)
+    IsKill = false;
+
   if (!EnableCopyProp)
     return Reg;
 
@@ -155,7 +170,7 @@ static Register performCopyPropagation(Register Reg,
   RI = ++MachineBasicBlock::iterator(Def);
   IsKill = DestSrc->Source->isKill();
 
-  if (!Use) {
+  if (!Use && !PreservedByStatepoint) {
     // There are no uses of original register between COPY and STATEPOINT.
     // There can't be any after STATEPOINT, so we can eliminate Def.
     LLVM_DEBUG(dbgs() << "spillRegisters: removing dead copy " << *Def);

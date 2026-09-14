@@ -1,4 +1,5 @@
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
 #include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
@@ -160,7 +161,18 @@ public:
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesAll();
+    // BUGFIX llvm23-frame-elide-preserves-all: this pass is NOT analysis
+    // preserving. Unlike upstream ShrinkWrap -- from which the declaration was
+    // copied -- FrameElide rewrites the CFG: ensureMFSplitEdgeForm() splits
+    // every critical edge, adding new MachineBasicBlocks. Claiming
+    // setPreservesAll() keeps the pre-split MachineLoopInfo alive, so the next
+    // MachineBlockFrequencyInfo recomputation walks the new CFG with a loop
+    // node set that no longer contains the split blocks. An edge into a loop
+    // header is then classified as a backedge while BFI is at function scope
+    // (OuterLoop == nullptr), and distributeMass() dereferences that null
+    // pointer -- a hard SIGSEGV at si_addr=0x18 in
+    // BlockFrequencyInfoImplBase::distributeMass, reached via
+    // MachineBlockPlacement after PEI.
     AU.addRequired<MachineBranchProbabilityInfoWrapperPass>();
     AU.addRequired<MachineOptimizationRemarkEmitterPass>();
     AU.addRequired<MachineLoopInfoWrapperPass>();
