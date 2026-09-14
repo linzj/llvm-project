@@ -1266,7 +1266,7 @@ public:
       StatepointObserved.insert(r);
   }
 
-  bool isStatepointObserved(Register r) {
+  bool isStatepointObserved(Register r) const {
     return StatepointObserved.count(r) != 0;
   }
 

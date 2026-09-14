@@ -154,8 +154,28 @@ void ProcessImplicitDefs::processImplicitDef(MachineInstr *MI) {
 
   // If we have added an undef flag to all uses (i.e. we have found a redefining
   // MI or there are no successors), we can erase the IMPLICIT_DEF.
+  //
+  // BUGFIX llvm23-physreg-impdef-live-in: before register allocation a
+  // physical register only flows into a successor through that successor's
+  // live-in list, so "no successor" is stricter than needed: when every use in
+  // this block got its undef flag and no successor lists the register (or an
+  // alias) as live-in, nobody can read it and the IMPLICIT_DEF is dead. The
+  // stricter rule left "$x11 = IMPLICIT_DEF" (an undef argument of a Dart
+  // call, x11 being an extra CSR) in front of the call in ~28% of functions;
+  // PrologEpilogInserter then counted x11 as modified and saved/restored the
+  // x10/x11 pair in functions that never touch them (a 5-instruction tear-off
+  // became 7), and the def also kept the allocator from using x11 across the
+  // call. LLVM 10 erased a physreg IMPLICIT_DEF as soon as it found a user.
+  auto LiveIntoSuccessor = [&]() {
+    for (const MachineBasicBlock *Succ : MI->getParent()->successors())
+      for (const MachineBasicBlock::RegisterMaskPair &LI : Succ->liveins())
+        if (TRI->regsOverlap(LI.PhysReg, Reg))
+          return true;
+    return false;
+  };
   if (ImplicitDefIsDead ||
-      (SearchedWholeBlock && MI->getParent()->succ_empty())) {
+      (SearchedWholeBlock &&
+       (MI->getParent()->succ_empty() || !LiveIntoSuccessor()))) {
     MI->eraseFromParent();
     LLVM_DEBUG(dbgs() << "Deleting implicit-def: " << *MI);
   }

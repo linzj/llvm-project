@@ -1624,6 +1624,19 @@ bool TargetInstrInfo::isReMaterializableImpl(
       MI.readsVirtualRegister(DefReg))
     return false;
 
+  // BUGFIX llvm23-no-remat-gc-pointers: a value the statepoint machinery
+  // observes is a tagged pointer. Rematerializing its definition after a
+  // safepoint recomputes it from inputs -- e.g. "orr %p, %w, $x28, lsl #32",
+  // the untied decompression the DAG picks for a single use -- that the
+  // collector never updates (%w is a raw 32-bit half), so the recomputed
+  // pointer is stale once the object moved. Upstream is protected by the
+  // relocation tied defs; this fork strips them (StatepointSimplify), so the
+  // guard lives here. With x28 a constant physreg (as in LLVM 10) this became
+  // reachable: JpegEncoder._processDU / JpegData.read / SlowTypeTest
+  // SEGV_ACCERR on stale objects, 3 of 4 cold starts.
+  if (DefReg.isVirtual() && MRI.isStatepointObserved(DefReg))
+    return false;
+
   // A load from a fixed stack slot can be rematerialized. This may be
   // redundant with subsequent checks, but it's target-independent,
   // simple, and a common case.

@@ -430,6 +430,21 @@ public:
   /// function.  Used by MachineRegisterInfo::isConstantPhysReg().
   virtual bool isConstantPhysReg(MCRegister PhysReg) const { return false; }
 
+  /// Dart AOT: true when a call's register mask is that of a register-pushing
+  /// shared stub (it preserves the caller-saved temporaries, which no calling
+  /// convention does). FixupStatepointCallerSaved keeps gc register records
+  /// across such calls: the stub's push area is described by the caller's
+  /// stack map register bits.
+  virtual bool isRegisterPushingCallMask(const uint32_t *Mask) const {
+    return false;
+  }
+
+  /// Registers that are constant for the whole function in the Dart
+  /// environment (thread, object pool, null, dispatch table, heap bits). The
+  /// TableGen-generated isConstantPhysReg() is final, so targets expose them
+  /// here; MachineRegisterInfo::isConstantPhysReg() consults both.
+  virtual bool isDartConstantPhysReg(MCRegister PhysReg) const { return false; }
+
   /// Returns true if the register class is considered divergent.
   virtual bool isDivergentRegClass(const TargetRegisterClass *RC) const {
     return false;

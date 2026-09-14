@@ -546,6 +546,15 @@ bool MachineRegisterInfo::isConstantPhysReg(MCRegister PhysReg) const {
   const TargetRegisterInfo *TRI = getTargetRegisterInfo();
   if (TRI->isConstantPhysReg(PhysReg))
     return true;
+  // BUGFIX llvm23-dart-constant-physregs: the LLVM 10 fork overrode
+  // isConstantPhysReg() for the Dart thread/pool/null/dispatch/heap-bits
+  // registers; LLVM 23 generates that method final, and the port's
+  // isDartConstantPhysReg() was only consulted by call lowering. Without it the
+  // coalescer refused to join "%v = COPY $x26" with uses in other blocks and
+  // "lsl x, x28, #32" was never rematerializable, so both got copied and
+  // spilled instead.
+  if (TRI->isDartConstantPhysReg(PhysReg))
+    return true;
 
   // Check if any overlapping register is modified, or allocatable so it may be
   // used later.

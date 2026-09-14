@@ -644,17 +644,33 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
 // Returns true for registers that hold constant values in the Dart
 // environment. Note that the TableGen-generated isConstantPhysReg() is final,
 // so this cannot be modeled as an override of it.
+bool AArch64RegisterInfo::isRegisterPushingCallMask(
+    const uint32_t *Mask) const {
+  // A register-pushing stub (kSharedStubCSR, kBoxInt64CSR) preserves the
+  // caller-saved temporaries x2..x9; the Dart-call mask (x10-x13), the C-call
+  // mask (x19, x24, ...) and the type-test stub masks do not.
+  for (unsigned R = AArch64::X2; R <= AArch64::X9; ++R)
+    if (!((Mask[R / 32] >> (R % 32)) & 1))
+      return false;
+  return true;
+}
+
 bool AArch64RegisterInfo::isDartConstantPhysReg(MCRegister PhysReg) const {
   if (TT.getEnvironment() == Triple::Dart) {
     switch (PhysReg) {
+    // x28 (HEAP_BITS) is deliberately absent: the runtime rewrites its
+    // barrier-mask half at safepoints, so it must be read at the point of use
+    // and never hoisted, CSE'd or rematerialized across a call -- exactly
+    // what "constant" would license (MachineLICM/MachineCSE/remat all key on
+    // isConstantPhysReg). The IR translator therefore reads it with
+    // llvm.read_register at every use (llvm23-fresh-heap-bits), so no copy of
+    // it is ever live across a call and nothing needs it to be constant.
     case AArch64::X27:
     case AArch64::X21:
-    case AArch64::X28:
     case AArch64::X22:
     case AArch64::X26:
     case AArch64::W27:
     case AArch64::W21:
-    case AArch64::W28:
     case AArch64::W22:
     case AArch64::W26:
       return true;

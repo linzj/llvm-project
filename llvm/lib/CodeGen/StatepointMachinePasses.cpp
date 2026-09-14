@@ -749,11 +749,6 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
                                               StatePoint->getDebugLoc(), true);
   MachineInstrBuilder MIB(MF, NewMI);
 
-  // See the write-back rule below: suspendable frames are restored by the
-  // runtime, not by store instructions in this function.
-  const bool IsSuspendable =
-      MF.getFunction().hasFnAttribute("dart-suspendable-function");
-
   // Check Any Stack Slot overlaps this StatePoint.
   SlotIndex Index = Indexes->getInstructionIndex(*StatePoint);
   Index = Index.getNextSlot();
@@ -855,7 +850,20 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     // function at all. A store-based analysis calls those slots undef and drops
     // live roots -- that is what made the earlier must-reach attempt crash in
     // _SuspendState._createAsyncCallbacks_thenCall. Keep reporting there.
-    if (!IsSuspendable) {
+    // BUGFIX llvm23-suspendable-uninit-slot: the exemption for suspendable
+    // functions was wrong. Resume copies the frame back exactly as it was at
+    // the suspension call, so every store fact that reached that call still
+    // holds after it; the one slot the runtime writes without a store here --
+    // the _SuspendState slot -- is force-marked by the assembler
+    // (llvm_code_assembler.cc IsSuspendableFunction) and needs no record.
+    // What the exemption did do was report a sibling-live slot before its
+    // first store: MethodChannel._invokeMethod (async) records sp+0x28 at the
+    // encodeMethodCall call while its only store, "str x10, [x15, #0x28]",
+    // comes 0x30 bytes later on the other path; the previous frame's leftover
+    // (0x5) went to the scavenger as a root (SEGV in VisitPointers, 2 of 3
+    // cold starts). Until now the FixupStatepointCallerSaved spill of x12
+    // happened to share and initialise that slot at every call, hiding it.
+    {
       // Two drop cases, and they differ in soundness:
       //   no store to this slot anywhere  -> pure undef, dropping is sound;
       //   stores exist but do not must-reach -> some path carries a real

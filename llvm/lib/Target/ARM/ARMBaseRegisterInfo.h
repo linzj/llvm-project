@@ -95,7 +95,7 @@ public:
 
   /// Returns true for registers that hold constant values in the Dart
   /// environment (e.g. the object pool and dispatch table registers).
-  bool isDartConstantPhysReg(MCRegister PhysReg) const;
+  bool isDartConstantPhysReg(MCRegister PhysReg) const override;
 
   const TargetRegisterClass *
   getPointerRegClass(unsigned Kind = 0) const override;

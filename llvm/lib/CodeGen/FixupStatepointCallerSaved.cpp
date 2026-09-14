@@ -406,27 +406,55 @@ public:
     // x20; stp x20, x10, [sp, #0x58]; bl StackOverflowShared...; stp x0, x14,
     // [fp, #-0x38]" came back stale, SEGV_ACCERR later.
     //
-    // Every register a V8CC callee preserves is visible to the collector on
-    // the callee side: LLVM frames mark their CSR save slots unconditionally
-    // (llvm_code_assembler.cc RecordSafePoint "csr always marked"),
-    // Dart-backend frames AddCSR (flow_graph_compiler_arm64.cc), exit frames
-    // scan fp[-1..-4] (stack_frame.cc first_fixed -= kCSRCount), and a
-    // register-pushing stub's push area is described by the caller's register
-    // bits. So for a V8CC statepoint a record in any register that the
-    // statepoint's *own* regmask preserves stays a register record; the
-    // assembler only consumes register bits at shared-stub call sites and
-    // ignores them elsewhere. Non-V8CC statepoints keep the upstream rule.
+    // Two kinds of preserved register are visible to the collector on the
+    // callee side and therefore need no spill:
+    //  (1) the function's own custom callee-saved registers (x10-x13 under
+    //      V8CC): an LLVM callee marks its CSR save slots unconditionally
+    //      (llvm_code_assembler.cc RecordSafePoint "csr always marked"), a
+    //      Dart-backend callee AddCSRs them (flow_graph_compiler_arm64.cc),
+    //      and an exit frame scans fp[-1..-4] (stack_frame.cc first_fixed -=
+    //      kCSRCount);
+    //  (2) a register-pushing shared stub, whose regmask preserves a whole
+    //      register class and whose push area the caller's register bits
+    //      describe.
+    // A mask that preserves only some other registers -- the C-call mask
+    // kCCallCSR (x19, x24, ...) -- is a callee that saves them in its own
+    // frame where no collector looks, so those records keep the spill
+    // (measured: keeping them as register records reproduced a scavenger
+    // crash on a stale root within four cold starts).
     const uint32_t *InstrMask = nullptr;
     for (const MachineOperand &MO : MI.operands())
       if (MO.isRegMask()) {
         InstrMask = MO.getRegMask();
         break;
       }
+    const MachineRegisterInfo &MRI = MI.getMF()->getRegInfo();
     auto InMask = [&](MCRegister R) {
       return InstrMask && ((InstrMask[R.id() / 32] >> (R.id() % 32)) & 1);
     };
-    const bool IsV8CC =
-        StatepointOpers(&MI).getCallingConv() == CallingConv::V8CC;
+    auto IsCustomCalleeSaved = [&](Register Reg) {
+      if (!MRI.isUpdatedCSRsInitialized())
+        return false;
+      for (const MCPhysReg *I = MRI.getCalleeSavedRegs(); *I; ++I)
+        if (TRI.regsOverlap(*I, Reg))
+          return true;
+      return false;
+    };
+    // BUGFIX llvm23-stub-mask-shape: the earlier test asked for the whole
+    // register class to be preserved, but the shared-stub mask (kSharedStubCSR)
+    // leaves out x17/x18 (allocatable here), so it never matched and every
+    // gc register at a StackOverflowShared / write-barrier / BoxInt64 stub
+    // call was still spilled -- "str x19, [x15, #0x38]; bl
+    // StackOverflowShared...; ldur x16, [x19, #0x7]" in JpegData.read, x19
+    // stale after the stub's own pop. What identifies a register-pushing stub
+    // is that its mask preserves the caller-saved temporaries x2..x9, which
+    // no calling convention does; the Dart-call mask (x10-x13), the C-call
+    // mask (x19, x24, ...) and the TTS masks do not.
+    const bool CalleePushesRegisters =
+        InstrMask && TRI.isRegisterPushingCallMask(InstrMask);
+    auto PreservedByRegisterPushingStub = [&](Register Reg) {
+      return CalleePushesRegisters && InMask(Reg);
+    };
 
     SmallSet<Register, 8> VisitedRegs;
     for (unsigned Idx = StatepointOpers(&MI).getVarIdx(),
@@ -440,7 +468,8 @@ public:
 
       if (isCalleeSaved(Reg) && (AllowGCPtrInCSR || !GCRegs.contains(Reg)))
         continue;
-      if (IsV8CC && InMask(Reg) && !GCRegs.contains(Reg))
+      if ((IsCustomCalleeSaved(Reg) || PreservedByRegisterPushingStub(Reg)) &&
+          !GCRegs.contains(Reg))
         continue;
 
       LLVM_DEBUG(dbgs() << "Will spill " << printReg(Reg, &TRI) << " at index "

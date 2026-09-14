@@ -4379,6 +4379,17 @@ bool AArch64DAGToDAGISel::tryReadRegister(SDNode *N) {
         // rejects); the AsmPrinter materializes the real mov/fmov.
         Register PReg = Subtarget->getTargetLowering()->matchRegisterName(
             RegString->getString());
+        // BUGFIX llvm23-read-reserved-register: a *reserved* register (the
+        // Dart thread register x26 under V8CC) is always live, so reading it
+        // as a plain CopyFromReg is legal and lets the coalescer fold the copy
+        // away (LLVM 10 produced "ldr x8, [x26, #0x68]"); the pseudo below is
+        // expanded by the AsmPrinter into an unfoldable "mov x8, x26" at every
+        // read (20k of them in libapp). Fall through to the generic
+        // Select_READ_REGISTER, whose getRegisterByName accepts reserved
+        // registers.
+        if (PReg && Subtarget->getRegisterInfo()->isReservedReg(
+                        CurDAG->getMachineFunction(), PReg))
+          return false;
         unsigned PseudoOp = 0;
         if (AArch64::GPR64RegClass.contains(PReg))
           PseudoOp = AArch64::READ_REGISTER_GPR64;

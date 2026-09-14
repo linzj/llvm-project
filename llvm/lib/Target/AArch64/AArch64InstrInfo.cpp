@@ -11683,6 +11683,15 @@ bool AArch64InstrInfo::isWhileOpcode(unsigned Opc) const {
 
 unsigned int
 AArch64InstrInfo::getTailDuplicateSize(CodeGenOptLevel OptLevel) const {
+  // BUGFIX llvm23-dart-tail-dup-size: LLVM 10 had no AArch64 override, so
+  // the Dart AOT build (CodeGenLevelAggressive) duplicated tails of up to 4
+  // instructions in block placement; the upstream override raised that to 6,
+  // which copies the whole "mov x0; ldp; ldp; ret" epilogue into every cold
+  // slow path (InitLateStaticField, ...) -- 404 vmservice functions, +20%
+  // ret instructions, size for a branch nobody takes. Keep the LLVM 10 value
+  // for the Dart environment.
+  if (Subtarget.getTargetTriple().getEnvironment() == Triple::Dart)
+    return OptLevel >= CodeGenOptLevel::Aggressive ? 4 : 2;
   return OptLevel >= CodeGenOptLevel::Aggressive ? 6 : 2;
 }
 
