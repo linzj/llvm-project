@@ -183,6 +183,7 @@ void LiveIntervals::analyze(MachineFunction &fn) {
 
   // Initialize V8CC Pointer PhysReg.
   NotV8CCPointers.clear();
+  V8CCRawExcluded.clear();
   if (IsV8CC) {
     NotV8CCPointers.resize(TRI->getNumRegs(), true);
     const TargetRegisterClass *PointerRegClass = TRI->getPointerRegClass();
@@ -190,6 +191,40 @@ void LiveIntervals::analyze(MachineFunction &fn) {
       for (MCSubRegIterator SubReg(Reg, TRI, true); SubReg.isValid();
            ++SubReg) {
         NotV8CCPointers.reset(*SubReg);
+      }
+    }
+
+    // BUGFIX llvm23-raw-in-extra-csr: the Dart side scans the extra
+    // callee-saved registers (x10-x13) as tagged at every safepoint -- the
+    // stack map forces their bits (llvm_code_assembler.cc should_be_tagged)
+    // and ExitFrame::VisitObjectPointers reads the exit frame's fp[-1..-4]
+    // unconditionally. A raw value must therefore never be *present* in one
+    // of them at a safepoint, live or dead. Restricting only registers whose
+    // interval overlaps a call (the previous rule) lets a short-lived raw
+    // value leave its payload behind, and lets post-RA renaming pick them as
+    // scratch. Collect the exclusion set once per function here: every
+    // statepoint's CSR interference mask, plus the function's custom
+    // callee-saved list without FP/LR.
+    V8CCRawExcluded.resize(TRI->getNumRegs(), false);
+    for (const MachineBasicBlock &MBB : *MF)
+      for (const MachineInstr &MI : MBB) {
+        if (MI.getOpcode() != TargetOpcode::STATEPOINT)
+          continue;
+        if (const uint32_t *Mask = MF->getStatepointCSRInterferenceMask(&MI))
+          for (unsigned R = 0, E = TRI->getNumRegs(); R != E; ++R)
+            if (Mask[R / 32] & (1u << (R % 32)))
+              V8CCRawExcluded.set(R);
+      }
+    if (MRI->isUpdatedCSRsInitialized()) {
+      const uint32_t *Base =
+          TRI->getCallPreservedMask(*MF, MF->getFunction().getCallingConv());
+      for (const MCPhysReg *R = MRI->getCalleeSavedRegs(); R && *R; ++R) {
+        // FP/LR are the calling convention's own callee-saved registers and
+        // never hold a Dart value.
+        if (Base && (Base[*R / 32] & (1u << (*R % 32))))
+          continue;
+        for (MCSubRegIterator S(*R, TRI, true); S.isValid(); ++S)
+          V8CCRawExcluded.set(*S);
       }
     }
   }
@@ -997,43 +1032,21 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
   }
 
   bool Found = false;
-  // Remove usable registers are pointers if InterferenceWithNonTagged flag
-  // is set, or def as sub reg.
-  // FIXME:(zuojian) Maybe I should check the loop, and starts from the SlotI.
-  if (IsV8CC &&
+  // BUGFIX llvm23-raw-in-extra-csr: a raw value (or a sub-register def, which
+  // leaves the upper half undefined) may never be allocated to an extra
+  // callee-saved register in a V8CC function, whether or not it is live
+  // across a call -- see the comment where V8CCRawExcluded is built.
+  if (IsV8CC && V8CCRawExcluded.any() &&
       (!MRI->isStatepointObserved(LI.reg()) ||
        IsRegDefAsSubReg(LI.reg(), *MRI))) {
-    for (const MachineBasicBlock &MBB : *MF) {
-      for (const MachineInstr &MI : MBB) {
-        if (MI.getOpcode() != TargetOpcode::STATEPOINT)
-          continue;
-
-        StatepointOpers Op(&MI);
-        const int64_t Flags = MI.getOperand(Op.getFlagsIdx()).getImm();
-        if (!(Flags &
-              static_cast<int64_t>(StatepointFlags::CSRInterferesNonTagged)))
-          continue;
-
-        const uint32_t *InterfereMask =
-            MF->getStatepointCSRInterferenceMask(&MI);
-        if (!InterfereMask)
-          continue;
-
-        if (!Found) {
-          UsableRegs.clear();
-          UsableRegs.resize(TRI->getNumRegs(), true);
-          Found = true;
-        }
-        UsableRegs.clearBitsInMask(InterfereMask);
-        LLVM_DEBUG(dbgs() << "Apply CSR interference for reg: "
-                          << printReg(LI.reg(), TRI) << "\n");
-      }
-    }
-
-    if (Found) {
-      // Restore the non pointer bits.
-      UsableRegs |= NotV8CCPointers;
-    }
+    UsableRegs.clear();
+    UsableRegs.resize(TRI->getNumRegs(), true);
+    UsableRegs.reset(V8CCRawExcluded);
+    // Restore the non pointer bits.
+    UsableRegs |= NotV8CCPointers;
+    Found = true;
+    LLVM_DEBUG(dbgs() << "Apply CSR interference for reg: "
+                      << printReg(LI.reg(), TRI) << "\n");
   }
 
   // We are going to enumerate all the register mask slots contained in LI.
@@ -1041,9 +1054,10 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
   ArrayRef<SlotIndex>::iterator SlotI = llvm::lower_bound(Slots, LiveI->start);
   ArrayRef<SlotIndex>::iterator SlotE = Slots.end();
 
-  // No slots in range, LI begins after the last call.
+  // No slots in range, LI begins after the last call. The V8CC exclusion
+  // above still applies.
   if (SlotI == SlotE)
-    return false;
+    return Found;
 
   // Utility to union regmasks.
   auto unionBitMask = [&](unsigned Idx) {

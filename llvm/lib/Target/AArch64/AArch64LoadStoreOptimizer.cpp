@@ -1941,11 +1941,25 @@ static std::optional<MCPhysReg> tryToFindRegisterToRename(
   const MachineRegisterInfo &RegInfo = MF.getRegInfo();
 
   // Checks if any sub- or super-register of PR is callee saved.
+  // BUGFIX llvm23-raw-in-extra-csr: also honour the function's custom
+  // callee-saved list (V8CC "custom-regmask": x10-x13). Those registers are
+  // not in the calling convention's preserved mask, so isCalleeSavedPhysReg()
+  // says no and the pair former happily renamed a raw loop counter into x10
+  // (JpegEncoder constructor, %stack.5 reload/add/spill). The Dart GC scans
+  // x10-x13 as tagged at every safepoint, so a raw value must never be
+  // written into them by anyone, including post-RA renaming.
   auto AnySubOrSuperRegCalleePreserved = [&MF, TRI](MCPhysReg PR) {
-    return any_of(TRI->sub_and_superregs_inclusive(PR),
-                  [&MF, TRI](MCPhysReg SubOrSuper) {
-                    return TRI->isCalleeSavedPhysReg(SubOrSuper, MF);
-                  });
+    return any_of(
+        TRI->sub_and_superregs_inclusive(PR), [&MF, TRI](MCPhysReg SubOrSuper) {
+          if (TRI->isCalleeSavedPhysReg(SubOrSuper, MF))
+            return true;
+          if (MF.getRegInfo().isUpdatedCSRsInitialized())
+            for (const MCPhysReg *R = MF.getRegInfo().getCalleeSavedRegs();
+                 R && *R; ++R)
+              if (*R == SubOrSuper)
+                return true;
+          return false;
+        });
   };
 
   // Check if PR or one of its sub- or super-registers can be used for all

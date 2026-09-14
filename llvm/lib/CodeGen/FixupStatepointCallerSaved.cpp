@@ -25,6 +25,7 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/IR/Statepoint.h"
@@ -388,6 +389,42 @@ public:
     for (const auto &Def : MI.defs())
       GCRegs.insert(Def.getReg());
 
+    // BUGFIX llvm23-fixup-preserve-all-stub: the spill decision used the
+    // function's calling convention mask, so a gc pointer in a caller-saved
+    // register across a V8 *shared stub* call (the stub pushes every register,
+    // preserves them all, and the Dart stack map's register bits let the
+    // collector update the pushed copies) was spilled to a fresh slot and its
+    // record rewritten to that slot. The slot then gets updated, but the code
+    // after the call keeps using the register -- which the stub restored from
+    // its own push copy, no longer described by any record. Measured in
+    // JpegEncoder.encode: "mov x14, x20; stp x20, x10, [sp, #0x58]; bl
+    // StackOverflowShared...; stp x0, x14, [fp, #-0x38]" -- x14 came back
+    // stale and was written into the loop's slot, SEGV_ACCERR later.
+    // A register the statepoint's own mask preserves stays a register record
+    // when that mask preserves the register's whole class (a register-pushing
+    // stub); masks that preserve only some registers (the extra CSRs of a
+    // Dart call, the AAPCS set of a C call) keep the spill, which the callee
+    // side handles by scanning its saved-register slots.
+    const uint32_t *InstrMask = nullptr;
+    for (const MachineOperand &MO : MI.operands())
+      if (MO.isRegMask()) {
+        InstrMask = MO.getRegMask();
+        break;
+      }
+    const MachineRegisterInfo &MRI = MI.getMF()->getRegInfo();
+    auto InMask = [&](MCRegister R) {
+      return InstrMask && ((InstrMask[R.id() / 32] >> (R.id() % 32)) & 1);
+    };
+    auto PreservedByRegisterPushingStub = [&](Register Reg) {
+      if (!InMask(Reg))
+        return false;
+      const TargetRegisterClass *RC = TRI.getMinimalPhysRegClass(Reg);
+      for (MCPhysReg R : *RC)
+        if (!MRI.isReserved(R) && !InMask(R))
+          return false;
+      return true;
+    };
+
     SmallSet<Register, 8> VisitedRegs;
     for (unsigned Idx = StatepointOpers(&MI).getVarIdx(),
                   EndIdx = MI.getNumOperands();
@@ -399,6 +436,8 @@ public:
       assert(Reg.isPhysical() && "Only physical regs are expected");
 
       if (isCalleeSaved(Reg) && (AllowGCPtrInCSR || !GCRegs.contains(Reg)))
+        continue;
+      if (PreservedByRegisterPushingStub(Reg) && !GCRegs.contains(Reg))
         continue;
 
       LLVM_DEBUG(dbgs() << "Will spill " << printReg(Reg, &TRI) << " at index "

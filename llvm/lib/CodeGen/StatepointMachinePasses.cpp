@@ -50,6 +50,19 @@
 #define DEBUG_TYPE "statepoint-simplify"
 using namespace llvm;
 namespace {
+struct DartSiblingStats {
+  std::atomic<uint64_t> Count{0}, Uninit{0}, RegRecs{0};
+  ~DartSiblingStats() {
+    if (getenv("STATEPOINT_STATS") != nullptr)
+      llvm::errs() << "SIBLING-LIVE slots_added=" << Count
+                   << " dropped_uninit=" << Uninit << " reg_records=" << RegRecs
+                   << "\n";
+  }
+};
+} // namespace
+static DartSiblingStats DartSiblingStatsInst;
+#define DartSiblingLiveSlots DartSiblingStatsInst.Count
+namespace {
 
 class StatepointSimplify : public MachineFunctionPass {
 public:
@@ -105,6 +118,28 @@ private:
   // every path has already stored to it, plus the blocks containing a store.
   DenseMap<int, BitVector> DefinitelyWritten;
   DenseMap<int, BitVector> BlockHasStore;
+  // BUGFIX llvm23-slot-live-through-sibling: every virtual register of the
+  // split family whose spill slot this is (VirtRegMap original), including the
+  // siblings the allocator kept in registers.
+  DenseMap<int, SmallVector<Register, 4>> SlotSiblingRegs;
+  // BUGFIX llvm23-init-through-copies: value-aware "slot is initialised"
+  // dataflow (see applyInit). InitIn[B] is the set of frame objects
+  // initialised on entry to block B; VRegInit[R] is false for a register some
+  // reload defined from an uninitialised slot; SlotHasStore is every frame
+  // object with any store at all.
+  bool slotInitAt(int FI, const MachineInstr *SP);
+  void applyInit(const MachineInstr &MI, BitVector &S, bool *Flipped);
+  void solveInit(MachineFunction &MF);
+  bool fiInRange(int FI) const {
+    return FI >= FIBase && FI < FIBase + static_cast<int>(NumFI);
+  }
+  unsigned fiIndex(int FI) const { return static_cast<unsigned>(FI - FIBase); }
+  int FIBase = 0;
+  unsigned NumFI = 0;
+  const TargetInstrInfo *TII = nullptr;
+  SmallVector<BitVector, 0> InitIn;
+  DenseMap<Register, bool> VRegInit;
+  DenseSet<int> SlotHasStore;
   SlotIndexes *Indexes;
   LiveIntervals *LIS;
   LiveStacks *LSS;
@@ -295,6 +330,101 @@ bool StatepointRewrite::mustBeWrittenAt(int FI, const MachineInstr *SP) const {
   return false;
 }
 
+void StatepointRewrite::applyInit(const MachineInstr &MI, BitVector &S,
+                                  bool *Flipped) {
+  int FI = 0;
+  if (MI.mayLoad()) {
+    if (Register R = TII->isLoadFromStackSlot(MI, FI)) {
+      // A reload carries the initialisation state of its slot into the
+      // register. A register with several defs is initialised only if every
+      // reload that defines it read an initialised slot.
+      if (R.isVirtual() && fiInRange(FI)) {
+        auto It = VRegInit.try_emplace(R, true).first;
+        if (It->second && !S.test(fiIndex(FI))) {
+          It->second = false;
+          if (Flipped)
+            *Flipped = true;
+        }
+      }
+    }
+  }
+  if (!MI.mayStore())
+    return;
+  if (Register Src = TII->isStoreToStackSlot(MI, FI)) {
+    if (!fiInRange(FI))
+      return;
+    bool Init = true;
+    if (Src.isVirtual()) {
+      auto It = VRegInit.find(Src);
+      if (It != VRegInit.end())
+        Init = It->second;
+    }
+    if (Init)
+      S.set(fiIndex(FI));
+    else
+      S.reset(fiIndex(FI));
+    return;
+  }
+  // Any other store into a frame object: the stored value is not a plain
+  // register we can trace, treat it as a definition (the old behaviour).
+  for (const MachineMemOperand *MMO : MI.memoperands()) {
+    const PseudoSourceValue *PSV = MMO->getPseudoValue();
+    if (PSV && PSV->kind() == PseudoSourceValue::FixedStack) {
+      const int F = cast<FixedStackPseudoSourceValue>(PSV)->getFrameIndex();
+      if (fiInRange(F))
+        S.set(fiIndex(F));
+    }
+  }
+}
+
+void StatepointRewrite::solveInit(MachineFunction &MF) {
+  const unsigned NumBlocks = MF.getNumBlockIDs();
+  VRegInit.clear();
+  InitIn.assign(NumBlocks, BitVector(NumFI, true));
+  SmallVector<BitVector, 0> Out(NumBlocks, BitVector(NumFI, true));
+  ReversePostOrderTraversal<MachineFunction *> RPOT(&MF);
+  // Must-dataflow (AND confluence): start from "everything initialised" and
+  // only ever clear bits, i.e. iterate to the greatest fixed point. VRegInit
+  // is monotone as well (true -> false only), so the loop terminates.
+  bool Changed = true;
+  while (Changed) {
+    Changed = false;
+    for (MachineBasicBlock *MBB : RPOT) {
+      const unsigned B = MBB->getNumber();
+      BitVector In(NumFI, !MBB->pred_empty());
+      if (MBB->pred_empty())
+        for (int FI = FIBase; FI < 0; ++FI)
+          In.set(fiIndex(FI)); // fixed objects are defined by the caller
+      for (MachineBasicBlock *P : MBB->predecessors())
+        In &= Out[P->getNumber()];
+      if (In != InitIn[B]) {
+        InitIn[B] = In;
+        Changed = true;
+      }
+      BitVector S = In;
+      for (const MachineInstr &MI : *MBB)
+        applyInit(MI, S, &Changed);
+      if (S != Out[B]) {
+        Out[B] = std::move(S);
+        Changed = true;
+      }
+    }
+  }
+}
+
+bool StatepointRewrite::slotInitAt(int FI, const MachineInstr *SP) {
+  if (!fiInRange(FI))
+    return false;
+  const MachineBasicBlock *BB = SP->getParent();
+  BitVector S = InitIn[BB->getNumber()];
+  for (const MachineInstr &MI : *BB) {
+    if (&MI == SP)
+      break;
+    applyInit(MI, S, nullptr);
+  }
+  return S.test(fiIndex(FI));
+}
+
 bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   bool Changed = false;
   SmallVector<MachineInstr *, 8> WorkList;
@@ -307,6 +437,31 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   for (int i = 0, e = MFI->getObjectIndexEnd(); i != e; ++i) {
     if (MFI->isStatepointSpillSlotObjectIndex(i))
       ObservedStackSlots.emplace_back(i);
+  }
+
+  // BUGFIX llvm23-slot-live-through-sibling: group the virtual registers by
+  // their pre-split original and attach the whole family to the slot the
+  // family spills to. See AddStackSlot in rewriteStatepoint() for why.
+  SlotSiblingRegs.clear();
+  {
+    DenseMap<Register, SmallVector<Register, 4>> ByOriginal;
+    for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+      Register V = Register::index2VirtReg(I);
+      if (MRI->reg_nodbg_empty(V) && !LIS->hasInterval(V))
+        continue;
+      ByOriginal[VRM->getOriginal(V)].push_back(V);
+    }
+    for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+      Register V = Register::index2VirtReg(I);
+      const int FI = VRM->getStackSlot(V);
+      if (FI == VirtRegMap::NO_STACK_SLOT ||
+          !MFI->isStatepointSpillSlotObjectIndex(FI))
+        continue;
+      auto &Sibs = SlotSiblingRegs[FI];
+      for (Register S : ByOriginal[VRM->getOriginal(V)])
+        if (!llvm::is_contained(Sibs, S))
+          Sibs.push_back(S);
+    }
   }
 
   // BUGFIX llvm23-statepoint-undef-slot: a value that the register allocator
@@ -544,6 +699,31 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
     }
   }
 
+  // BUGFIX llvm23-init-through-copies: "a store to the slot must-reaches the
+  // statepoint" is not enough once a slot can be reported through a register
+  // sibling (llvm23-slot-live-through-sibling): the sibling may be live before
+  // the value was ever spilled, and a spilled loop PHI cycle can consist of
+  // stores that only copy another uninitialised slot. Track initialisation
+  // through values instead -- a reload from an uninitialised slot yields an
+  // uninitialised register and storing it does not define the destination --
+  // and report a slot only where it is initialised on every path.
+  TII = MF.getSubtarget().getInstrInfo();
+  FIBase = MFI->getObjectIndexBegin();
+  NumFI = static_cast<unsigned>(MFI->getObjectIndexEnd() - FIBase);
+  SlotHasStore.clear();
+  for (MachineBasicBlock &MBB : MF)
+    for (MachineInstr &MI : MBB) {
+      if (!MI.mayStore())
+        continue;
+      for (const MachineMemOperand *MMO : MI.memoperands()) {
+        const PseudoSourceValue *PSV = MMO->getPseudoValue();
+        if (PSV && PSV->kind() == PseudoSourceValue::FixedStack)
+          SlotHasStore.insert(
+              cast<FixedStackPseudoSourceValue>(PSV)->getFrameIndex());
+      }
+    }
+  solveInit(MF);
+
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
     for (MachineInstr &MI : *MBB) {
@@ -588,7 +768,13 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     bool IsSlot;
     int SpillSize;
     int StackSlot;
-    MCRegister Phys;
+    // BUGFIX llvm23-register-records: the *virtual* register. VirtRegRewriter
+    // runs right after this pass and substitutes the assigned physical
+    // register; emitting the physical register here would be a use of a
+    // register whose units have no live range yet, which the verifier rejects
+    // ("No live segment at use") -- the reason the LLVM 23 port had added the
+    // register-unit guard that silently dropped every record.
+    Register Reg;
   };
   SmallVector<GCRecord, 8> NewRecords;
 
@@ -596,7 +782,40 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
   (void)TII2;
   auto AddStackSlot = [&](int StackSlot) {
     LiveInterval &Interval = LSS->getInterval(StackSlot);
-    if (!Interval.liveAt(Index))
+    bool Live = Interval.liveAt(Index);
+    // BUGFIX llvm23-slot-live-through-sibling: LiveStacks only merges the
+    // intervals of the registers InlineSpiller actually spilled. When greedy
+    // splits a value around a cold call block ("lr-split COPY" into a sibling
+    // that stays in a register across the call) and copies it back
+    // afterwards, the slot's interval has a hole across that call, yet the
+    // spiller still reloads from the slot later, because the copy-back is the
+    // same value and eliminateRedundantSpills() found it already spilled. For
+    // a plain value that is fine; for a gc pointer the object may move at the
+    // call, the register copy is updated (shared stub push / CSR slots) but
+    // the unreported slot keeps the old address, and the later reload hands
+    // the mutator a stale pointer (JpegEncoder.encode, slot %stack.7 across
+    // mock_call_CheckStackOverflow -> SEGV_ACCERR in the freed semispace).
+    // The slot is a root for as long as any sibling of the family is live.
+    if (!Live) {
+      auto It = SlotSiblingRegs.find(StackSlot);
+      if (It != SlotSiblingRegs.end())
+        for (Register S : It->second)
+          if (LIS->hasInterval(S) && LIS->getInterval(S).liveAt(Index)) {
+            Live = true;
+            ++DartSiblingLiveSlots;
+            break;
+          }
+      if (Live && Interval.getNumValNums() > 0) {
+        // Keep LiveStacks consistent with the record (the verifier checks
+        // the statepoint's memoperand against it, and StackSlotColoring must
+        // not hand the slot to another value across this call).
+        const SlotIndex SPIdx = Indexes->getInstructionIndex(*StatePoint);
+        Interval.addSegment(LiveInterval::Segment(SPIdx.getBaseIndex(),
+                                                  SPIdx.getDeadSlot(),
+                                                  Interval.getValNumInfo(0)));
+      }
+    }
+    if (!Live)
       return;
     // HISTORY(llvm23-statepoint-mustreach): a plain must-reach gate here does
     // remove the bogus roots, but on its own it also drops roots that are live
@@ -644,9 +863,16 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
       //     above has already defined the slot in the entry block whenever that
       //     can happen, so reaching here with stores present means the analysis
       //     and the fallback disagree; count it and keep the record.
-      if (!mustBeWrittenAt(StackSlot, StatePoint) &&
-          DefinitelyWritten.find(StackSlot) == DefinitelyWritten.end())
+      // BUGFIX llvm23-init-through-copies: no store anywhere is a pure undef
+      // and dropping is sound; not initialised on every path to this
+      // statepoint means the slot may hold whatever the frame had, so it must
+      // not be handed to the collector either.
+      if (!SlotHasStore.count(StackSlot))
         return;
+      if (!slotInitAt(StackSlot, StatePoint)) {
+        ++DartSiblingStatsInst.Uninit;
+        return;
+      }
     }
     if (!RecordedStackSlot.insert(StackSlot).second)
       return;
@@ -662,15 +888,25 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     MCRegister Phys = VRM->getPhys(Reg);
     if (!Phys.isValid())
       return false;
-    // BUGFIX llvm23-statepoint-sections: the virtual register interval alone
-    // is not enough. A vreg can still report live here while its assigned
-    // physical register holds nothing (its def was folded away), and reporting
-    // such a register hands the GC a root that contains garbage. Require the
-    // physical register itself to be live at the statepoint.
-    for (MCRegUnit Unit : TRI->regunits(Phys))
-      if (!LIS->getRegUnit(Unit).liveAt(Index))
-        return false;
-    NewRecords.push_back({false, 0, 0, Phys});
+    // BUGFIX llvm23-register-records: the LLVM 23 port additionally required
+    // the physical register's *register units* to be live here, to guard
+    // against a vreg whose def was folded away. But this pass runs before
+    // VirtRegRewriter, and register-unit live ranges only know explicit
+    // physical operands -- a virtual register assigned to x20 never makes
+    // x20's unit live -- so the guard rejected essentially every register
+    // record (JpegEncoder.encode: 0 register records at its 55 loop call
+    // sites). A tagged value that the allocator keeps in a caller-saved
+    // register across a register-preserving shared stub (CheckStackOverflow
+    // at the loop back-edge) was then invisible to the collector, came back
+    // stale when the stub returned, and was spilled stale into a slot every
+    // later record faithfully "updated" (SEGV_ACCERR in the freed semispace
+    // at JpegEncoder.encode+0x1af8). Ask the virtual register's own live
+    // range instead: it is live here and has a real, used value number.
+    const VNInfo *VNI = LIS->getInterval(Reg).getVNInfoAt(Index);
+    if (!VNI || VNI->isUnused())
+      return false;
+    ++DartSiblingStatsInst.RegRecs;
+    NewRecords.push_back({false, 0, 0, Reg});
     return true;
   };
 
@@ -701,7 +937,7 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
           MIB.addFrameIndex(R.StackSlot);
           MIB.addImm(0);
         } else {
-          MIB.addReg(R.Phys);
+          MIB.addReg(R.Reg);
         }
       }
     }

@@ -100,6 +100,12 @@ class LiveIntervals {
 
   /// Track PhysRegs can not be use a pointer and their sub reg.
   BitVector NotV8CCPointers;
+  // BUGFIX llvm23-raw-in-extra-csr: registers a raw (non statepoint-observed)
+  // value may never occupy in a V8CC function -- the extra callee-saved
+  // registers (x10-x13) that the Dart stack maps and the exit-frame scan treat
+  // as tagged unconditionally. Union of every statepoint's CSR interference
+  // mask plus the function's custom callee-saved list (minus FP/LR).
+  BitVector V8CCRawExcluded;
   /// Track if current function using v8cc.
   bool IsV8CC;
 
