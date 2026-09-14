@@ -2340,7 +2340,23 @@ insertUseHolderAfter(CallBase *Call,
                      const PartiallyConstructedSafepointRecord &Record,
                      const PointerToBaseTy &PointerToBase,
                      SmallVectorImpl<CallInst *> &Holders) {
-  if (PointerToBase.empty())
+  // BUGFIX llvm23-rs4gc-holder-scope: only the bases of the pointers live at
+  // *this* safepoint may be held live after it. LLVM 10 kept PointerToBase per
+  // safepoint record, so iterating the whole map was equivalent to iterating
+  // this record's live set. Upstream made PointerToBase a single map for the
+  // whole function ("[RS4GC] Make PointerToBase mapping be independent on
+  // call site", 28c5e1b760ae) and filters the holder through Info.LiveSet;
+  // the LLVM 23 port kept iterating the map, so every safepoint held every
+  // base pointer of the function live -- including values defined later.
+  // recomputeLiveInValues() then saw those values live on every path (around
+  // loops and up to the entry block), RS4GC relocated them at every
+  // safepoint, mem2reg filled the not-yet-defined paths with undef, and the
+  // loop-header PHIs of e.g. AnimatableTransformParser.parse got an undef
+  // entry value. PHI elimination emits no copy for an IMPLICIT_DEF input, so
+  // the two spilled sibling slots of such a PHI only ever copied each other
+  // and the stack map reported a slot holding whatever the previous frame
+  // left there (0x013195e1 on device).
+  if (Record.LiveSet.empty())
     // No values to hold live, might as well not insert the empty holder
     return;
 
@@ -2349,10 +2365,16 @@ insertUseHolderAfter(CallBase *Call,
   FunctionCallee Func = M->getOrInsertFunction(
       "__tmp_use", FunctionType::get(Type::getVoidTy(M->getContext()), true));
 
+  auto BaseOf = [&](Value *Derived) {
+    auto It = PointerToBase.find(Derived);
+    assert(It != PointerToBase.end() && "Missed base for derived pointer");
+    return It->second;
+  };
+
   if (isa<CallInst>(Call)) {
     SmallVector<Value *, 128> Bases;
-    for (auto Pair : PointerToBase)
-      Bases.push_back(Pair.second);
+    for (Value *Derived : Record.LiveSet)
+      Bases.push_back(BaseOf(Derived));
     // For call safepoints insert dummy calls right after safepoint
     Holders.push_back(
         CallInst::Create(Func, Bases, "", &*++Call->getIterator()));
@@ -2363,12 +2385,10 @@ insertUseHolderAfter(CallBase *Call,
   // exceptional destination blocks, with Bases filtered.
   auto *II = cast<InvokeInst>(Call);
   SmallVector<Value *, 128> NormalBases, UnwindBases;
-  for (auto Pair : PointerToBase) {
-    if (Record.NormalLiveSet.count(Pair.first) != 0)
-      NormalBases.push_back(Pair.second);
-    if (Record.UnwindLiveSet.count(Pair.first) != 0)
-      UnwindBases.push_back(Pair.second);
-  }
+  for (Value *Derived : Record.NormalLiveSet)
+    NormalBases.push_back(BaseOf(Derived));
+  for (Value *Derived : Record.UnwindLiveSet)
+    UnwindBases.push_back(BaseOf(Derived));
 
   Holders.push_back(CallInst::Create(
       Func, NormalBases, "", &*II->getNormalDest()->getFirstInsertionPt()));
@@ -3095,14 +3115,15 @@ static void stripInvalidMetadataFromInstruction(Instruction &I) {
   // changed once it became dereferenceable. This is no longer true after RS4GC.
   // Similar reasoning applies to invariant.group metadata, which applies to
   // loads within a group.
-  unsigned ValidMetadataAfterRS4GC[] = {LLVMContext::MD_tbaa,
-                         LLVMContext::MD_range,
-                         LLVMContext::MD_alias_scope,
-                         LLVMContext::MD_nontemporal,
-                         LLVMContext::MD_even_num,
-                         LLVMContext::MD_nonnull,
-                         LLVMContext::MD_align,
-                         LLVMContext::MD_type};
+  unsigned ValidMetadataAfterRS4GC[] = {
+      LLVMContext::MD_tbaa, LLVMContext::MD_range, LLVMContext::MD_alias_scope,
+      LLVMContext::MD_nontemporal, LLVMContext::MD_even_num,
+      LLVMContext::MD_nonnull, LLVMContext::MD_align,
+      // LINZJ: We need MD_invariant_load to show a load is
+      // from root. (restored from LLVM 10 fork commit
+      // 816316680377 "RewriteStatepointsForGC preserves
+      // invariant load", lost during the LLVM 23 upgrade)
+      LLVMContext::MD_invariant_load, LLVMContext::MD_type};
 
   // Drops all metadata on the instruction other than ValidMetadataAfterRS4GC.
   I.dropUnknownNonDebugMetadata(ValidMetadataAfterRS4GC);
