@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdlib>
 
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -92,6 +93,11 @@ public:
 private:
   bool rewriteStatepoints(MachineFunction &);
   bool rewriteStatepoint(MachineFunction &, MachineInstr *MI);
+
+  /// True when a store to \p FI reaches \p SP on every path from the entry
+  /// block. Uses the block-level must-reach result plus a scan of SP's own
+  /// block.
+  bool mustBeWrittenAt(int FI, const MachineInstr *SP) const;
 
   SmallVector<Register, 8> ObservedRegistersWithPhys;
   SmallVector<int, 8> ObservedStackSlots;
@@ -262,6 +268,33 @@ bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
   return rewriteStatepoints(MF);
 }
 
+bool StatepointRewrite::mustBeWrittenAt(int FI, const MachineInstr *SP) const {
+  auto DW = DefinitelyWritten.find(FI);
+  if (DW == DefinitelyWritten.end())
+    return false;
+  const MachineBasicBlock *BB = SP->getParent();
+  const unsigned B = BB->getNumber();
+  if (DW->second.test(B))
+    return true;
+  auto BH = BlockHasStore.find(FI);
+  if (BH == BlockHasStore.end() || !BH->second.test(B))
+    return false;
+  // A store inside this block only counts if it precedes the statepoint.
+  for (const MachineInstr &MI : *BB) {
+    if (&MI == SP)
+      break;
+    if (!MI.mayStore())
+      continue;
+    for (const MachineMemOperand *MMO : MI.memoperands()) {
+      const PseudoSourceValue *PSV = MMO->getPseudoValue();
+      if (PSV && PSV->kind() == PseudoSourceValue::FixedStack &&
+          cast<FixedStackPseudoSourceValue>(PSV)->getFrameIndex() == FI)
+        return true;
+    }
+  }
+  return false;
+}
+
 bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   bool Changed = false;
   SmallVector<MachineInstr *, 8> WorkList;
@@ -367,14 +400,65 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   // ObjectPointerVisitor::VisitPointer on a near-null address.
   //
   // So run the must-reach dataflow here, over stores only, and use it purely to
-  // decide whether a slot goes into the stack map. Not reporting a slot that
-  // some *other* path wrote is safe: the prologue fills every reported slot, so
-  // an untouched slot reads as Smi 0.
+  // decide whether a slot goes into the stack map. A slot no store reaches at
+  // all is dropped; a slot some path wrote is always reported, and
+  // llvm23-undef-entry-init below guarantees it is defined on the other paths.
+  // BUGFIX llvm23-mustreach-fixpoint: "a store to this slot reaches this point
+  // on every path" is an AND-confluence (must) dataflow, i.e. the same shape as
+  // available expressions, so it has to be solved for the GREATEST fixed point:
+  // every block starts out "written" and the iteration only ever clears bits.
+  //
+  // Seeding Out from HasStore instead computes the least fixed point, which is
+  // wrong for every loop. In
+  //
+  //     entry: store slot            latch: (no store)
+  //     head:  statepoint            preds(head) = {entry, latch}
+  //
+  // Out[latch] starts false, so In[head] = Out[entry] && Out[latch] = false,
+  // which clears Out[head], which clears In[latch] -- the whole loop settles on
+  // "never written" even though the preheader writes the slot before every
+  // iteration. That misclassification is what made a plain must-reach gate look
+  // like it had to drop live roots, and what llvm23-undef-edge-init was
+  // papering over by storing a Smi 0 on each frontier edge.
+  //
+  // Blocks with no predecessors (the entry block, and anything unreachable) are
+  // pinned to "not written on entry".
+  const unsigned NumBlocksTotal = MF.getNumBlockIDs();
+  ReversePostOrderTraversal<MachineFunction *> RPOT(&MF);
+  auto ComputeMustReach = [&](const BitVector &HasStore) {
+    BitVector In(NumBlocksTotal), Out(NumBlocksTotal);
+    In.set();
+    Out.set();
+    bool Changed2 = true;
+    while (Changed2) {
+      Changed2 = false;
+      for (MachineBasicBlock *MBB : RPOT) {
+        const unsigned B = MBB->getNumber();
+        bool NewIn = !MBB->pred_empty();
+        for (MachineBasicBlock *P : MBB->predecessors())
+          if (!Out.test(P->getNumber())) {
+            NewIn = false;
+            break;
+          }
+        if (NewIn != In.test(B)) {
+          In[B] = NewIn;
+          Changed2 = true;
+        }
+        const bool NewOut = NewIn || HasStore.test(B);
+        if (NewOut != Out.test(B)) {
+          Out[B] = NewOut;
+          Changed2 = true;
+        }
+      }
+    }
+    return In;
+  };
+
   DefinitelyWritten.clear();
   if (!ObservedStackSlots.empty()) {
     const unsigned NumBlocks = MF.getNumBlockIDs();
     for (int FI : ObservedStackSlots) {
-      BitVector HasStore(NumBlocks), In(NumBlocks), Out(NumBlocks);
+      BitVector HasStore(NumBlocks), In(NumBlocks);
       for (MachineBasicBlock &MBB : MF)
         for (MachineInstr &MI : MBB) {
           if (!MI.mayStore())
@@ -388,128 +472,75 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
         }
       if (HasStore.none())
         continue;
-      Out = HasStore;
-      bool Changed2 = true;
-      while (Changed2) {
-        Changed2 = false;
-        for (MachineBasicBlock &MBB : MF) {
-          const unsigned B = MBB.getNumber();
-          bool NewIn = !MBB.pred_empty();
-          for (MachineBasicBlock *P : MBB.predecessors())
-            if (!Out.test(P->getNumber())) {
-              NewIn = false;
-              break;
-            }
-          if (NewIn != In.test(B)) {
-            In[B] = NewIn;
-            Changed2 = true;
-          }
-          const bool NewOut = NewIn || HasStore.test(B);
-          if (NewOut != Out.test(B)) {
-            Out[B] = NewOut;
-            Changed2 = true;
-          }
-        }
-      }
+      In = ComputeMustReach(HasStore);
       DefinitelyWritten[FI] = std::move(In);
       BlockHasStore[FI] = std::move(HasStore);
     }
   }
 
-  // BUGFIX llvm23-undef-edge-init: case 3 of the write-back rule below.
+  // BUGFIX llvm23-undef-entry-init (replaces llvm23-undef-edge-init).
   //
-  // The write-back drops a gc record when no store must-reach the statepoint,
-  // because that is exactly when the slot's input is undef (upstream elides the
-  // spill store of an undef value, so a real value always leaves a store).
-  // That is sound only when the slot is undef on *every* path. Measured on the
-  // vmservice snapshot, it never is: 10091 of 10091 drops are the mixed case,
-  // where some path stored a real pointer and another stored nothing --
+  // The write-back below refuses to report a slot that no store must-reach,
+  // because that is what an undef input looks like after the gc operands have
+  // been stripped. Dropping is only sound when the slot is undef on *every*
+  // path; when one path stored a real pointer and another stored nothing,
+  // dropping loses a live root.
   //
-  //   loop header:  statepoint S        ; x = PHI(undef@preheader, obj@latch)
-  //                 use(x)              ; on iteration 2 x is a real root at S
-  //                 x = obj
-  //
-  // Dropping there loses a live root; keeping it reports garbage on the first
-  // iteration. Neither is safe, so remove the choice: store Smi 0 on the edges
-  // where the slot is undefined but live, which makes must-reach hold and lets
-  // the record be written normally.
-  //
-  // Placement is the frontier between "not written on exit" and "slot live out"
-  // -- in the example above that is the single loop pre-header, not every
-  // block. This is deliberately not a prologue fill: only edges that actually
-  // carry an undefined-but-live slot are touched.
+  // With the must-reach dataflow solved correctly that situation has not been
+  // observed (vmservice: 46368/46368 records reported, 0 drops; see
+  // llvm23-mustreach-fixpoint), but it is not ruled out by construction. So
+  // keep a fallback, and make it the cheapest one that is obviously correct:
+  // define the slot once at the top of the entry block. The entry block
+  // dominates every statepoint, so a single store makes must-reach hold for the
+  // whole function -- no frontier to compute, no per-edge live interval
+  // surgery, and the store is Smi 0, which the collector skips.
   if (!DefinitelyWritten.empty()) {
     const TargetInstrInfo *TIIz = MF.getSubtarget().getInstrInfo();
     const TargetRegisterInfo *TRIz = MF.getSubtarget().getRegisterInfo();
     const Register Zero = TIIz->getGCSafeZeroReg();
+    MachineBasicBlock &Entry = MF.front();
     for (int FI : ObservedStackSlots) {
       auto DWIt = DefinitelyWritten.find(FI);
       if (DWIt == DefinitelyWritten.end())
-        continue; // case 2: no store anywhere, the drop is sound.
+        continue; // no store anywhere: pure undef, the drop is sound.
       BitVector &In = DWIt->second;
       BitVector &HasStore = BlockHasStore[FI];
       LiveInterval &SI = LSS->getInterval(FI);
-      bool Inserted = false;
+      bool Need = false;
       for (MachineBasicBlock &MBB : MF) {
-        const unsigned B = MBB.getNumber();
-        if (MBB.succ_empty())
-          continue;
-        if (In.test(B) || HasStore.test(B))
-          continue; // already written on exit
-        // Only the frontier: the slot has to be live leaving this block,
-        // otherwise nothing downstream can read or report it.
-        SlotIndex End = Indexes->getMBBEndIdx(&MBB).getPrevSlot();
-        if (!SI.liveAt(End))
-          continue;
-        MachineBasicBlock::iterator IP = MBB.getFirstTerminator();
-        MachineBasicBlock::iterator Before =
-            IP == MBB.begin() ? MBB.end() : std::prev(IP);
-        TIIz->storeRegToStackSlot(MBB, IP, Zero, false, FI,
-                                  TRIz->getMinimalPhysRegClass(Zero),
-                                  Register());
-        MachineBasicBlock::iterator NewI =
-            Before == MBB.end() ? MBB.begin() : std::next(Before);
-        for (; NewI != IP; ++NewI) {
-          Indexes->insertMachineInstrInMaps(*NewI);
-          SlotIndex Idx = Indexes->getInstructionIndex(*NewI).getRegSlot();
-          if (!SI.liveAt(Idx))
-            SI.addSegment(LiveInterval::Segment(Idx, Idx.getDeadSlot(),
-                                                SI.getValNumInfo(0)));
+        for (MachineInstr &MI : MBB) {
+          if (MI.getOpcode() != TargetOpcode::STATEPOINT)
+            continue;
+          if (!SI.liveAt(Indexes->getInstructionIndex(MI).getNextSlot()))
+            continue;
+          if (mustBeWrittenAt(FI, &MI))
+            continue;
+          Need = true;
+          break;
         }
-        HasStore.set(B);
-        Inserted = true;
-        Changed = true;
+        if (Need)
+          break;
       }
-      if (!Inserted)
+      if (!Need)
         continue;
-      // Re-run the must-reach dataflow for this slot so the write-back below
-      // sees the newly defined edges.
-      const unsigned NumBlocks2 = MF.getNumBlockIDs();
-      BitVector Out2(NumBlocks2), In2(NumBlocks2);
-      Out2 = HasStore;
-      bool Ch2 = true;
-      while (Ch2) {
-        Ch2 = false;
-        for (MachineBasicBlock &MBB : MF) {
-          const unsigned B = MBB.getNumber();
-          bool NewIn = !MBB.pred_empty();
-          for (MachineBasicBlock *P : MBB.predecessors())
-            if (!Out2.test(P->getNumber())) {
-              NewIn = false;
-              break;
-            }
-          if (NewIn != In2.test(B)) {
-            In2[B] = NewIn;
-            Ch2 = true;
-          }
-          const bool NewOut = NewIn || HasStore.test(B);
-          if (NewOut != Out2.test(B)) {
-            Out2[B] = NewOut;
-            Ch2 = true;
-          }
-        }
+      MachineBasicBlock::iterator IP =
+          Entry.SkipPHIsLabelsAndDebug(Entry.begin());
+      MachineBasicBlock::iterator Before =
+          IP == Entry.begin() ? Entry.end() : std::prev(IP);
+      TIIz->storeRegToStackSlot(Entry, IP, Zero, false, FI,
+                                TRIz->getMinimalPhysRegClass(Zero), Register());
+      MachineBasicBlock::iterator NewI =
+          Before == Entry.end() ? Entry.begin() : std::next(Before);
+      for (; NewI != IP; ++NewI) {
+        Indexes->insertMachineInstrInMaps(*NewI);
+        SlotIndex Idx = Indexes->getInstructionIndex(*NewI).getRegSlot();
+        if (!SI.liveAt(Idx))
+          SI.addSegment(LiveInterval::Segment(Idx, Idx.getDeadSlot(),
+                                              SI.getValNumInfo(0)));
       }
-      In = std::move(In2);
+      HasStore.set(Entry.getNumber());
+      In = ComputeMustReach(HasStore);
+      Changed = true;
     }
   }
 
@@ -574,9 +605,10 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     // map, so an unreported pointer never gets updated when its object moves
     // (crash on resume in _SuspendState._createAsyncCallbacks_thenCall).
     // The rule below is must-reach made sound: suspendable frames are exempt,
-    // and llvm23-undef-edge-init defines the undefined-but-live edges so that
-    // the mixed case no longer has to choose between a bogus root and a lost
-    // one.
+    // the dataflow is solved for the greatest fixed point
+    // (llvm23-mustreach-fixpoint) so loop-carried slots are no longer
+    // misclassified, and llvm23-undef-entry-init defines the slot once in the
+    // entry block if any statepoint could still see it undefined.
     // BUGFIX llvm23-undef-not-written-back: if the value this slot holds at
     // this statepoint is undef, do not write a gc record for it.
     //
@@ -590,8 +622,8 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     // kept out of every slot comes back as a slot-based root and the GC
     // dereferences whatever the frame happened to contain.
     //
-    // A slot's input is undef exactly when no store reaches this point. The
-    // register-level test is useless here: by the time this pass runs the
+    // A slot's input is undef exactly when no store reaches this point at all.
+    // The register-level test is useless here: by the time this pass runs the
     // owning vreg has been spilled, so its live interval is not live at the
     // statepoint at all (measured: 55000 candidates, 0 hits).
     //
@@ -605,41 +637,15 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     // live roots -- that is what made the earlier must-reach attempt crash in
     // _SuspendState._createAsyncCallbacks_thenCall. Keep reporting there.
     if (!IsSuspendable) {
-      bool Written = false;
-      auto DW = DefinitelyWritten.find(StackSlot);
-      if (DW != DefinitelyWritten.end()) {
-        MachineBasicBlock *SPBB = StatePoint->getParent();
-        const unsigned B = SPBB->getNumber();
-        Written = DW->second.test(B);
-        if (!Written) {
-          auto BH = BlockHasStore.find(StackSlot);
-          if (BH != BlockHasStore.end() && BH->second.test(B)) {
-            // A store in this block only counts if it precedes the statepoint.
-            for (MachineInstr &MI : *SPBB) {
-              if (&MI == StatePoint)
-                break;
-              if (!MI.mayStore())
-                continue;
-              for (const MachineMemOperand *MMO : MI.memoperands()) {
-                const PseudoSourceValue *PSV = MMO->getPseudoValue();
-                if (PSV && PSV->kind() == PseudoSourceValue::FixedStack &&
-                    cast<FixedStackPseudoSourceValue>(PSV)->getFrameIndex() ==
-                        StackSlot) {
-                  Written = true;
-                  break;
-                }
-              }
-              if (Written)
-                break;
-            }
-          }
-        }
-      }
-      // Split the drop into the two cases that matter for soundness:
-      //   case 2: no store to this slot anywhere -> pure undef, safe to drop.
-      //   case 3: stores exist but do not must-reach -> some path carries a
-      //           real pointer. Dropping loses a root, keeping reports garbage.
-      if (!Written)
+      // Two drop cases, and they differ in soundness:
+      //   no store to this slot anywhere  -> pure undef, dropping is sound;
+      //   stores exist but do not must-reach -> some path carries a real
+      //     pointer, so dropping would lose a root. llvm23-undef-entry-init
+      //     above has already defined the slot in the entry block whenever that
+      //     can happen, so reaching here with stores present means the analysis
+      //     and the fallback disagree; count it and keep the record.
+      if (!mustBeWrittenAt(StackSlot, StatePoint) &&
+          DefinitelyWritten.find(StackSlot) == DefinitelyWritten.end())
         return;
     }
     if (!RecordedStackSlot.insert(StackSlot).second)
