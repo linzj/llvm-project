@@ -652,6 +652,18 @@ VNInfo *SplitEditor::defFromParent(unsigned RegIdx, const VNInfo *ParentVNI,
 
   Register Reg = LI->reg();
   LaneBitmask LaneMask = getLiveLaneMaskAt(Edit->getParent(), UseIdx, MRI);
+  // BUGFIX llvm23-split-observed-full-copy: a statepoint-observed value (a gc
+  // pointer whose spill slot or register the stack map reports) is always
+  // defined at a split point with a full COPY, the way LLVM 10 did. With the
+  // empty lane mask LLVM 23 computes for a parent that is dead here, the
+  // sibling would be an IMPLICIT_DEF: the spiller still stores it, the slot is
+  // reported, and the collector scans whatever the register held. Every
+  // must-reach / initialisation dataflow the port grew in StatepointRewrite
+  // existed to paper over exactly that; closing it at the source lets the
+  // stack map report every live slot again without dropping any.
+  if (MRI.isStatepointObserved(Edit->getParent().reg()) ||
+      MRI.isStatepointObserved(Original) || MRI.isStatepointObserved(Reg))
+    LaneMask = LaneBitmask::getAll();
   if (OrigVNI && LaneMask.any()) {
     LiveRangeEdit::Remat RM(ParentVNI);
     RM.OrigMI = LIS.getInstructionFromIndex(OrigVNI->def);
