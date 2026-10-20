@@ -1665,7 +1665,15 @@ void InstrLowerer::maybeSetComdat(GlobalVariable *GV, GlobalObject *GO,
   // global variable (e.g. function counters) of the COMDAT function will be
   // emitted after linking.
   bool NeedComdat = needsComdatForCounter(*GO, M);
-  bool UseComdat = (NeedComdat || TT.isOSBinFormatELF());
+  // Dart PGO gen (DART_ENABLE_LLVM_PRECOMPILER_PGO) consumes the object file
+  // itself instead of linking it, and expects a single __llvm_prf_cnts /
+  // __llvm_prf_data / .rela__llvm_prf_data per object, the layout LLVM produced
+  // before the ELF section groups below were introduced. The group only exists
+  // to let `-z start-stop-gc` drop counters of discarded functions, which never
+  // applies here, so the module can opt out of it.
+  bool NoSectionGroup =
+      !NeedComdat && M.getModuleFlag("dart-instrprof-no-section-group");
+  bool UseComdat = (NeedComdat || (TT.isOSBinFormatELF() && !NoSectionGroup));
 
   if (!UseComdat)
     return;
