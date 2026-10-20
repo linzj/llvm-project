@@ -518,9 +518,16 @@ void StackMaps::recordStackMapOpers(const MCSymbol &MILabel,
   }
 
   // Parse operands.
-  if (MI.getOpcode() == TargetOpcode::STATEPOINT)
+  if (MI.getOpcode() == TargetOpcode::STATEPOINT) {
     parseStatepointOpers(MI, MOI, MOE, Locations, LiveOuts);
-  else
+    // StackMapLiveness also visits STATEPOINT and appends the live-out mask
+    // after the gc map, which parseStatepointOpers never reaches. The Dart
+    // backend needs it to pick the FPU-saving variant of shared slow-path
+    // stubs when FPU registers are live across the call.
+    for (; MOI != MOE; ++MOI)
+      if (MOI->isRegLiveOut())
+        LiveOuts = parseRegisterLiveOutMask(MOI->getRegLiveOut());
+  } else
     while (MOI != MOE)
       MOI = parseOperand(MOI, MOE, Locations, LiveOuts);
 
