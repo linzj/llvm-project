@@ -18,9 +18,11 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/Compiler.h"
 #include <memory>
+#include <vector>
 
 namespace llvm {
 
+class GlobalValue;
 class Module;
 
 /// Splits the module M into N linkable partitions. The function ModuleCallback
@@ -40,6 +42,19 @@ LLVM_ABI void
 SplitModule(Module &M, unsigned N,
             function_ref<void(std::unique_ptr<Module> MPart)> ModuleCallback,
             bool PreserveLocals = false, bool RoundRobin = false);
+
+// UC_BUILD_LLVM_COMPILER
+/// Assign the definitions of \p M to \p N partitions exactly as
+/// SplitModule(M, N, ..., /*PreserveLocals=*/false, /*RoundRobin=*/false)
+/// would, but without cloning: \p Partitions[I] lists partition I's
+/// definitions, global variables first, each kind in module order, ready for
+/// BitcodeWriter::writeModulePartition(). Like SplitModule(), this
+/// externalizes local symbols of \p M. It also builds the lazily created
+/// arguments of every definition, so that writing partitions afterwards
+/// only reads \p M.
+LLVM_ABI void computeModulePartitions(
+    Module &M, unsigned N,
+    std::vector<std::vector<const GlobalValue *>> &Partitions);
 
 } // end namespace llvm
 

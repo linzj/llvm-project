@@ -15,6 +15,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/UniqueVector.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/UseListOrder.h"
@@ -39,6 +40,45 @@ class raw_ostream;
 class Type;
 class Value;
 class ValueSymbolTable;
+// UC_BUILD_LLVM_COMPILER
+class GlobalValue;
+class GlobalVariable;
+
+// UC_BUILD_LLVM_COMPILER: the globals that one partition of a split writes
+// (see BitcodeWriter::writeModulePartition()).
+struct ModulePartitionView {
+  /// The globals written, in the order they are written: the partition's own
+  /// definitions in module order, then the other globals they reference, as
+  /// declarations, in the order they were found.
+  std::vector<const GlobalVariable *> GlobalVars;
+  std::vector<const Function *> Functions;
+  /// Globals whose definitions (initializer or body) are written.
+  DenseSet<const GlobalValue *> Defined;
+  /// Every global written, defined here or declared.
+  DenseSet<const GlobalValue *> Included;
+  /// The compile units of llvm.dbg.cu that the partition's debug info refers
+  /// to. SplitModule() copies every unit into every partition, but DWARF
+  /// emission skips units no code refers to, and a module that gives each
+  /// function a unit of its own would otherwise repeat all of them per
+  /// partition.
+  DenseSet<const MDNode *> KeptDebugCompileUnits;
+  bool WriteModuleInlineAsm;
+
+  ModulePartitionView(const Module &M,
+                      ArrayRef<const GlobalValue *> Definitions,
+                      bool WriteModuleInlineAsm);
+
+  bool writesDefinition(const GlobalValue &GV) const {
+    return Defined.contains(&GV);
+  }
+  bool includes(const GlobalValue &GV) const { return Included.contains(&GV); }
+  /// Metadata attached to a global is written for the partition's own
+  /// definitions and for declarations of the whole module; SplitModule()
+  /// drops it from the declarations it makes of other partitions' globals.
+  bool writesMetadataOf(const GlobalValue &GV) const;
+  bool writesNamedMetadataOperand(const NamedMDNode &NMD,
+                                  const MDNode *N) const;
+};
 
 class ValueEnumerator {
 public:
@@ -105,6 +145,10 @@ private:
 
   bool ShouldPreserveUseListOrder;
 
+  // UC_BUILD_LLVM_COMPILER: the partition being written, or null when the
+  // whole module is.
+  const ModulePartitionView *Part = nullptr;
+
   using AttributeGroupMapType = DenseMap<IndexAndAttrSet, unsigned>;
   AttributeGroupMapType AttributeGroupMap;
   std::vector<IndexAndAttrSet> AttributeGroups;
@@ -139,6 +183,8 @@ private:
 
 public:
   ValueEnumerator(const Module &M, bool ShouldPreserveUseListOrder);
+  // UC_BUILD_LLVM_COMPILER: enumerate only what \p Part writes.
+  ValueEnumerator(const Module &M, const ModulePartitionView &Part);
   ValueEnumerator(const ValueEnumerator &) = delete;
   ValueEnumerator &operator=(const ValueEnumerator &) = delete;
 

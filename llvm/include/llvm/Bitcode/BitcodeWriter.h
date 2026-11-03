@@ -13,6 +13,7 @@
 #ifndef LLVM_BITCODE_BITCODEWRITER_H
 #define LLVM_BITCODE_BITCODEWRITER_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/MC/StringTableBuilder.h"
@@ -25,8 +26,15 @@
 namespace llvm {
 
 class BitstreamWriter;
+class GlobalValue;
 class Module;
 class raw_ostream;
+
+// UC_BUILD_LLVM_COMPILER
+/// Whether BitcodeWriter::writeModulePartition() can write partitions of
+/// \p M: it has no aliases, ifuncs, comdats or appending globals, whose
+/// placement rules partitioning by single definitions does not follow.
+LLVM_ABI bool canWriteModulePartitions(const Module &M);
 
 class BitcodeWriter {
   std::unique_ptr<BitstreamWriter> Stream;
@@ -90,6 +98,20 @@ public:
                             const ModuleSummaryIndex *Index = nullptr,
                             bool GenerateHash = false,
                             ModuleHash *ModHash = nullptr);
+
+  // UC_BUILD_LLVM_COMPILER: write one partition of a split straight from the
+  // whole module, instead of cloning the partition into a module of its own.
+  /// Write what one partition of \p M needs: the definitions in
+  /// \p Definitions (in module order), a declaration of every other global
+  /// they reference, and nothing else; a referenced definition of another
+  /// partition is written as an external declaration. The result reads back
+  /// as the module SplitModule() would have produced for that partition.
+  /// \p M is only read, so several threads may write different partitions of
+  /// one module at the same time, provided nothing modifies the module or
+  /// its LLVMContext meanwhile. \p M must satisfy canWriteModulePartitions().
+  LLVM_ABI void writeModulePartition(const Module &M,
+                                     ArrayRef<const GlobalValue *> Definitions,
+                                     bool WriteModuleInlineAsm);
 
   /// Write the specified thin link bitcode file (i.e., the minimized bitcode
   /// file) to the buffer specified at construction time. The thin link

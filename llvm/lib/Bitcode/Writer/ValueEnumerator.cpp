@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ValueEnumerator.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Argument.h"
@@ -37,6 +38,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -513,6 +515,284 @@ ValueEnumerator::ValueEnumerator(const Module &M,
   organizeMetadata();
 }
 
+// UC_BUILD_LLVM_COMPILER: partitions written straight from the whole module.
+bool ModulePartitionView::writesMetadataOf(const GlobalValue &GV) const {
+  return writesDefinition(GV) || GV.isDeclaration();
+}
+
+static constexpr StringLiteral DebugCompileUnitsName = "llvm.dbg.cu";
+
+bool ModulePartitionView::writesNamedMetadataOperand(const NamedMDNode &NMD,
+                                                     const MDNode *N) const {
+  return NMD.getName() != DebugCompileUnitsName ||
+         KeptDebugCompileUnits.contains(N);
+}
+
+ModulePartitionView::ModulePartitionView(
+    const Module &M, ArrayRef<const GlobalValue *> Definitions,
+    bool WriteModuleInlineAsm)
+    : WriteModuleInlineAsm(WriteModuleInlineAsm) {
+  auto AddGlobal = [&](const GlobalValue *GV) {
+    if (const auto *Var = dyn_cast<GlobalVariable>(GV))
+      GlobalVars.push_back(Var);
+    else if (const auto *F = dyn_cast<Function>(GV))
+      Functions.push_back(F);
+    else
+      report_fatal_error("bitcode partitions cannot hold aliases or ifuncs");
+  };
+  for (const GlobalValue *GV : Definitions) {
+    assert(!GV->isDeclaration() && "a partition lists definitions only");
+    Defined.insert(GV);
+    Included.insert(GV);
+    AddGlobal(GV);
+  }
+
+  // Collect every global the partition refers to: from the bodies and
+  // initializers it defines, through nested constants and metadata, and from
+  // named metadata and the metadata kept on declarations.
+  SmallVector<const Constant *, 32> ConstantWorklist;
+  SmallVector<const Metadata *, 32> MetadataWorklist;
+  SmallPtrSet<const Constant *, 32> SeenConstants;
+  SmallPtrSet<const Metadata *, 32> SeenMetadata;
+  SmallVector<std::pair<unsigned, MDNode *>, 8> Attachments;
+
+  auto VisitMetadata = [&](const Metadata *MD) {
+    if (MD && SeenMetadata.insert(MD).second)
+      MetadataWorklist.push_back(MD);
+  };
+  auto VisitAttachments = [&](const GlobalObject &GO) {
+    Attachments.clear();
+    GO.getAllMetadata(Attachments);
+    for (const auto &A : Attachments)
+      VisitMetadata(A.second);
+  };
+  auto VisitValue = [&](const Value *V) {
+    if (const auto *GV = dyn_cast<GlobalValue>(V)) {
+      if (!Included.insert(GV).second)
+        return;
+      AddGlobal(GV);
+      if (writesMetadataOf(*GV))
+        VisitAttachments(cast<GlobalObject>(*GV));
+      return;
+    }
+    if (const auto *C = dyn_cast<Constant>(V)) {
+      if (C->getNumOperands() && SeenConstants.insert(C).second)
+        ConstantWorklist.push_back(C);
+      return;
+    }
+    if (const auto *MAV = dyn_cast<MetadataAsValue>(V))
+      VisitMetadata(MAV->getMetadata());
+  };
+  auto Drain = [&] {
+    while (!ConstantWorklist.empty() || !MetadataWorklist.empty()) {
+      if (!ConstantWorklist.empty()) {
+        const Constant *C = ConstantWorklist.pop_back_val();
+        for (const Use &U : C->operands())
+          if (!isa<BasicBlock>(U))
+            VisitValue(U.get());
+        continue;
+      }
+      const Metadata *MD = MetadataWorklist.pop_back_val();
+      if (const auto *VAM = dyn_cast<ValueAsMetadata>(MD)) {
+        VisitValue(VAM->getValue());
+      } else if (const auto *AL = dyn_cast<DIArgList>(MD)) {
+        for (const ValueAsMetadata *VAM : AL->getArgs())
+          VisitMetadata(VAM);
+      } else if (const auto *N = dyn_cast<MDNode>(MD)) {
+        for (const MDOperand &Op : N->operands())
+          VisitMetadata(Op.get());
+      }
+    }
+  };
+
+  for (const GlobalValue *GV : Definitions) {
+    if (const auto *Var = dyn_cast<GlobalVariable>(GV)) {
+      if (Var->hasInitializer())
+        VisitValue(Var->getInitializer());
+      VisitAttachments(*Var);
+      Drain();
+      continue;
+    }
+    const Function &F = cast<Function>(*GV);
+    for (const Use &U : F.operands()) // Personality, prefix and prologue.
+      VisitValue(U.get());
+    VisitAttachments(F);
+    for (const BasicBlock &BB : F)
+      for (const Instruction &I : BB) {
+        for (const Use &Op : I.operands())
+          VisitValue(Op.get());
+        Attachments.clear();
+        I.getAllMetadata(Attachments);
+        for (const auto &A : Attachments)
+          VisitMetadata(A.second);
+        for (const DbgRecord &DR : I.getDbgRecordRange()) {
+          VisitMetadata(DR.getDebugLoc().getAsMDNode());
+          if (const auto *DLR = dyn_cast<DbgLabelRecord>(&DR)) {
+            VisitMetadata(DLR->getRawLabel());
+            continue;
+          }
+          const auto &DVR = cast<DbgVariableRecord>(DR);
+          VisitMetadata(DVR.getRawLocation());
+          VisitMetadata(DVR.getRawVariable());
+          VisitMetadata(DVR.getRawExpression());
+          if (DVR.isDbgAssign()) {
+            VisitMetadata(DVR.getRawAddress());
+            VisitMetadata(DVR.getRawAssignID());
+            VisitMetadata(DVR.getRawAddressExpression());
+          }
+        }
+      }
+    Drain();
+  }
+  // llvm.dbg.cu is not walked: the units the partition needs were reached
+  // above through its subprograms.
+  for (const NamedMDNode &NMD : M.named_metadata()) {
+    if (NMD.getName() == DebugCompileUnitsName)
+      continue;
+    for (const MDNode *N : NMD.operands())
+      VisitMetadata(N);
+  }
+  Drain();
+  if (const NamedMDNode *Units = M.getNamedMetadata(DebugCompileUnitsName))
+    for (const MDNode *N : Units->operands())
+      if (SeenMetadata.contains(N))
+        KeptDebugCompileUnits.insert(N);
+}
+
+// Mirrors the whole-module constructor above, restricted to what the
+// partition writes.
+ValueEnumerator::ValueEnumerator(const Module &M, const ModulePartitionView &P)
+    : ShouldPreserveUseListOrder(false), Part(&P) {
+  for (const GlobalVariable *GV : P.GlobalVars) {
+    EnumerateValue(GV);
+    EnumerateType(GV->getValueType());
+  }
+  for (const Function *F : P.Functions) {
+    EnumerateValue(F);
+    EnumerateType(F->getFunctionType());
+    EnumerateAttributes(F->getAttributes());
+  }
+
+  unsigned FirstConstant = Values.size();
+
+  for (const GlobalVariable *GV : P.GlobalVars) {
+    if (P.writesDefinition(*GV) && GV->hasInitializer())
+      EnumerateValue(GV->getInitializer());
+    if (GV->hasAttributes())
+      EnumerateAttributes(
+          GV->getAttributesAsList(AttributeList::FunctionIndex));
+  }
+  for (const Function *F : P.Functions)
+    if (P.writesDefinition(*F))
+      for (const Use &U : F->operands())
+        EnumerateValue(U.get());
+
+  EnumerateType(Type::getMetadataTy(M.getContext()));
+  for (const NamedMDNode &NMD : M.named_metadata())
+    for (const MDNode *N : NMD.operands())
+      if (P.writesNamedMetadataOperand(NMD, N))
+        EnumerateMetadata(nullptr, N);
+
+  SmallVector<std::pair<unsigned, MDNode *>, 8> MDs;
+  for (const GlobalVariable *GV : P.GlobalVars) {
+    if (!P.writesMetadataOf(*GV))
+      continue;
+    MDs.clear();
+    GV->getAllMetadata(MDs);
+    for (const auto &I : MDs)
+      EnumerateMetadata(nullptr, I.second);
+  }
+
+  for (const Function *F : P.Functions) {
+    if (!P.writesDefinition(*F)) {
+      // F->args() is left alone: the function type already enumerated the
+      // argument types, and building a declaration's lazy arguments would
+      // modify the module other threads are reading.
+      if (P.writesMetadataOf(*F)) {
+        MDs.clear();
+        F->getAllMetadata(MDs);
+        for (const auto &I : MDs)
+          EnumerateMetadata(nullptr, I.second);
+      }
+      continue;
+    }
+    for (const Argument &A : F->args())
+      EnumerateType(A.getType());
+
+    MDs.clear();
+    F->getAllMetadata(MDs);
+    for (const auto &I : MDs)
+      EnumerateMetadata(F, I.second);
+
+    for (const BasicBlock &BB : *F)
+      for (const Instruction &I : BB) {
+        auto EnumerateNonLocalValuesFromMetadata = [&](Metadata *MD) {
+          assert(MD && "Metadata unexpectedly null");
+          if (const auto *AL = dyn_cast<DIArgList>(MD)) {
+            for (const auto *VAM : AL->getArgs()) {
+              if (isa<ConstantAsMetadata>(VAM))
+                EnumerateMetadata(F, VAM);
+            }
+            return;
+          }
+
+          if (!isa<LocalAsMetadata>(MD))
+            EnumerateMetadata(F, MD);
+        };
+
+        for (DbgRecord &DR : I.getDbgRecordRange()) {
+          if (DbgLabelRecord *DLR = dyn_cast<DbgLabelRecord>(&DR)) {
+            EnumerateMetadata(F, DLR->getLabel());
+            EnumerateMetadata(F, &*DLR->getDebugLoc());
+            continue;
+          }
+          DbgVariableRecord &DVR = cast<DbgVariableRecord>(DR);
+          EnumerateNonLocalValuesFromMetadata(DVR.getRawLocation());
+          EnumerateMetadata(F, DVR.getExpression());
+          EnumerateMetadata(F, DVR.getVariable());
+          EnumerateMetadata(F, &*DVR.getDebugLoc());
+          if (DVR.isDbgAssign()) {
+            EnumerateNonLocalValuesFromMetadata(DVR.getRawAddress());
+            EnumerateMetadata(F, DVR.getAssignID());
+            EnumerateMetadata(F, DVR.getAddressExpression());
+          }
+        }
+        for (const Use &Op : I.operands()) {
+          auto *MD = dyn_cast<MetadataAsValue>(&Op);
+          if (!MD) {
+            EnumerateOperandType(Op);
+            continue;
+          }
+
+          EnumerateNonLocalValuesFromMetadata(MD->getMetadata());
+        }
+        if (auto *SVI = dyn_cast<ShuffleVectorInst>(&I))
+          EnumerateType(SVI->getShuffleMaskForBitcode()->getType());
+        if (auto *GEP = dyn_cast<GetElementPtrInst>(&I))
+          EnumerateType(GEP->getSourceElementType());
+        if (auto *AI = dyn_cast<AllocaInst>(&I))
+          EnumerateType(AI->getAllocatedType());
+        EnumerateType(I.getType());
+        if (const auto *Call = dyn_cast<CallBase>(&I)) {
+          EnumerateAttributes(Call->getAttributes());
+          EnumerateType(Call->getFunctionType());
+        }
+
+        MDs.clear();
+        I.getAllMetadataOtherThanDebugLoc(MDs);
+        for (const auto &MD : MDs)
+          EnumerateMetadata(F, MD.second);
+
+        if (DILocation *L = I.getDebugLoc())
+          for (const Metadata *Op : L->operands())
+            EnumerateMetadata(F, Op);
+      }
+  }
+
+  OptimizeConstants(FirstConstant, Values.size());
+  organizeMetadata();
+}
+
 unsigned ValueEnumerator::getInstructionID(const Instruction *Inst) const {
   InstructionMapType::const_iterator I = InstructionMap.find(Inst);
   assert(I != InstructionMap.end() && "Instruction is not mapped!");
@@ -923,6 +1203,12 @@ void ValueEnumerator::EnumerateValue(const Value *V) {
     Values[ValueID-1].second++;
     return;
   }
+
+  // UC_BUILD_LLVM_COMPILER: a partition enumerates all of its globals up front
+  // from its view; a global reached only now would get no module-level record.
+  if (Part && isa<GlobalValue>(V) && !Part->includes(*cast<GlobalValue>(V)))
+    report_fatal_error(Twine("bitcode partition misses referenced global '") +
+                       V->getName() + "'");
 
   if (auto *GO = dyn_cast<GlobalObject>(V))
     if (const Comdat *C = GO->getComdat())

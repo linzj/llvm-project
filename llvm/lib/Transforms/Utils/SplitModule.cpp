@@ -215,6 +215,25 @@ static void externalize(GlobalValue *GV) {
     GV->setName("__llvmsplit_unnamed");
 }
 
+// UC_BUILD_LLVM_COMPILER: the partition isInPartition() selects, computed once
+// instead of once per partition.
+static unsigned partitionByHash(const GlobalValue *GV, unsigned N) {
+  if (const GlobalObject *Root = getGVPartitioningRoot(GV))
+    GV = Root;
+
+  StringRef Name;
+  if (const Comdat *C = GV->getComdat())
+    Name = C->getName();
+  else
+    Name = GV->getName();
+
+  MD5 H;
+  MD5::MD5Result R;
+  H.update(Name);
+  H.final(R);
+  return (R[0] | (R[1] << 8)) % N;
+}
+
 // Returns whether GV should be in partition (0-based) I of N.
 static bool isInPartition(const GlobalValue *GV, unsigned I, unsigned N) {
   if (const GlobalObject *Root = getGVPartitioningRoot(GV))
@@ -234,6 +253,175 @@ static bool isInPartition(const GlobalValue *GV, unsigned I, unsigned N) {
   H.update(Name);
   H.final(R);
   return (R[0] | (R[1] << 8)) % N == I;
+}
+
+// UC_BUILD_LLVM_COMPILER: CloneModule() declares every global of M in every
+// partition, so splitting into N parts costs O(N * |M|) on the (serial) split
+// thread before any per-partition work starts, and every partition then has to
+// carry, serialize and destroy ~|M| unused declarations. Clone only the
+// partition's definitions up front and create declarations on first
+// reference instead.
+namespace {
+class PartitionDeclMaterializer final : public ValueMaterializer {
+public:
+  explicit PartitionDeclMaterializer(Module &New) : New(New) {}
+
+  Value *materialize(Value *V) override {
+    auto *GV = dyn_cast<GlobalValue>(V);
+    if (!GV)
+      return nullptr;
+    // Partition definitions are mapped before any body is cloned, so whatever
+    // reaches here is an external reference from this partition.
+    if (auto *F = dyn_cast<Function>(GV)) {
+      Function *NF = Function::Create(F->getFunctionType(), F->getLinkage(),
+                                      F->getAddressSpace(), F->getName(), &New);
+      NF->copyAttributesFrom(F);
+      if (!F->isDeclaration())
+        NF->setLinkage(GlobalValue::ExternalLinkage);
+      // Only valid on definitions; would also point back into M.
+      NF->setPersonalityFn(nullptr);
+      NF->setPrefixData(nullptr);
+      NF->setPrologueData(nullptr);
+      return NF;
+    }
+    if (auto *G = dyn_cast<GlobalVariable>(GV)) {
+      auto *NG = new GlobalVariable(
+          New, G->getValueType(), G->isConstant(),
+          G->isDeclaration() ? G->getLinkage() : GlobalValue::ExternalLinkage,
+          nullptr, G->getName(), nullptr, G->getThreadLocalMode(),
+          G->getType()->getAddressSpace());
+      NG->copyAttributesFrom(G);
+      if (!G->isDeclaration())
+        NG->setLinkage(GlobalValue::ExternalLinkage);
+      return NG;
+    }
+    // An alias / ifunc outside the partition cannot be an external reference;
+    // declare a function or variable of the value type, as CloneModule does.
+    if (GV->getValueType()->isFunctionTy())
+      return Function::Create(cast<FunctionType>(GV->getValueType()),
+                              GlobalValue::ExternalLinkage,
+                              GV->getAddressSpace(), GV->getName(), &New);
+    return new GlobalVariable(New, GV->getValueType(), false,
+                              GlobalValue::ExternalLinkage, nullptr,
+                              GV->getName(), nullptr, GV->getThreadLocalMode(),
+                              GV->getType()->getAddressSpace());
+  }
+
+private:
+  Module &New;
+};
+} // namespace
+
+static void copyComdatInto(GlobalObject *Dst, const GlobalObject *Src) {
+  const Comdat *SC = Src->getComdat();
+  if (!SC)
+    return;
+  Comdat *DC = Dst->getParent()->getOrInsertComdat(SC->getName());
+  DC->setSelectionKind(SC->getSelectionKind());
+  Dst->setComdat(DC);
+}
+
+static std::unique_ptr<Module>
+clonePartition(const Module &M, ValueToValueMapTy &VMap,
+               function_ref<bool(const GlobalValue *)> InPartition) {
+  auto New = std::make_unique<Module>(M.getModuleIdentifier(), M.getContext());
+  New->setSourceFileName(M.getSourceFileName());
+  New->setDataLayout(M.getDataLayout());
+  New->setTargetTriple(M.getTargetTriple());
+  New->setModuleInlineAsm(M.getModuleInlineAsm());
+  PartitionDeclMaterializer Mat(*New);
+
+  // Definitions of this partition first, so references between them map to
+  // the clones rather than to materialized declarations.
+  for (const GlobalVariable &G : M.globals()) {
+    if (G.isDeclaration() || !InPartition(&G))
+      continue;
+    auto *NG = new GlobalVariable(*New, G.getValueType(), G.isConstant(),
+                                  G.getLinkage(), nullptr, G.getName(), nullptr,
+                                  G.getThreadLocalMode(),
+                                  G.getType()->getAddressSpace());
+    NG->copyAttributesFrom(&G);
+    VMap[&G] = NG;
+  }
+  for (const Function &F : M) {
+    if (F.isDeclaration() || !InPartition(&F))
+      continue;
+    Function *NF =
+        Function::Create(F.getFunctionType(), F.getLinkage(),
+                         F.getAddressSpace(), F.getName(), New.get());
+    NF->copyAttributesFrom(&F);
+    VMap[&F] = NF;
+  }
+  for (const GlobalAlias &A : M.aliases()) {
+    if (!InPartition(&A))
+      continue;
+    auto *NA = GlobalAlias::create(A.getValueType(),
+                                   A.getType()->getPointerAddressSpace(),
+                                   A.getLinkage(), A.getName(), New.get());
+    NA->copyAttributesFrom(&A);
+    VMap[&A] = NA;
+  }
+  for (const GlobalIFunc &I : M.ifuncs()) {
+    if (!InPartition(&I))
+      continue;
+    auto *NI =
+        GlobalIFunc::create(I.getValueType(), I.getAddressSpace(),
+                            I.getLinkage(), I.getName(), nullptr, New.get());
+    NI->copyAttributesFrom(&I);
+    VMap[&I] = NI;
+  }
+
+  for (const Function &F : M) {
+    if (F.isDeclaration() || !InPartition(&F))
+      continue;
+    auto *NF = cast<Function>(VMap[&F]);
+    Function::arg_iterator DestI = NF->arg_begin();
+    for (const Argument &J : F.args()) {
+      DestI->setName(J.getName());
+      VMap[&J] = &*DestI++;
+    }
+    SmallVector<ReturnInst *, 8> Returns;
+    CloneFunctionInto(NF, &F, VMap, CloneFunctionChangeType::ClonedModule,
+                      Returns, "", nullptr, nullptr, &Mat);
+    if (F.hasPersonalityFn())
+      NF->setPersonalityFn(
+          MapValue(F.getPersonalityFn(), VMap, RF_None, nullptr, &Mat));
+    copyComdatInto(NF, &F);
+  }
+  for (const GlobalAlias &A : M.aliases()) {
+    if (!InPartition(&A))
+      continue;
+    if (const Constant *C = A.getAliasee())
+      cast<GlobalAlias>(VMap[&A])->setAliasee(
+          MapValue(C, VMap, RF_None, nullptr, &Mat));
+  }
+  for (const GlobalIFunc &I : M.ifuncs()) {
+    if (!InPartition(&I))
+      continue;
+    if (const Constant *R = I.getResolver())
+      cast<GlobalIFunc>(VMap[&I])->setResolver(
+          MapValue(R, VMap, RF_None, nullptr, &Mat));
+  }
+  for (const NamedMDNode &NMD : M.named_metadata()) {
+    NamedMDNode *NewNMD = New->getOrInsertNamedMetadata(NMD.getName());
+    for (const MDNode *Op : NMD.operands())
+      NewNMD->addOperand(MapMetadata(Op, VMap, RF_None, nullptr, &Mat));
+  }
+  for (const GlobalVariable &G : M.globals()) {
+    if (G.isDeclaration() || !InPartition(&G))
+      continue;
+    auto *NG = cast<GlobalVariable>(VMap[&G]);
+    SmallVector<std::pair<unsigned, MDNode *>, 1> MDs;
+    G.getAllMetadata(MDs);
+    for (auto &MD : MDs)
+      NG->addMetadata(MD.first,
+                      *MapMetadata(MD.second, VMap, RF_None, nullptr, &Mat));
+    if (G.hasInitializer())
+      NG->setInitializer(
+          MapValue(G.getInitializer(), VMap, RF_None, nullptr, &Mat));
+    copyComdatInto(NG, &G);
+  }
+  return New;
 }
 
 void llvm::SplitModule(
@@ -297,7 +485,7 @@ void llvm::SplitModule(
   for (unsigned I = 0; I < N; ++I) {
     ValueToValueMapTy VMap;
     std::unique_ptr<Module> MPart(
-        CloneModule(M, VMap, [&](const GlobalValue *GV) {
+        clonePartition(M, VMap, [&](const GlobalValue *GV) {
           if (auto It = ClusterIDMap.find(GV); It != ClusterIDMap.end())
             return It->second == I;
           else
@@ -306,5 +494,41 @@ void llvm::SplitModule(
     if (I != 0)
       MPart->removeModuleInlineAsm();
     ModuleCallback(std::move(MPart));
+  }
+}
+
+// UC_BUILD_LLVM_COMPILER: SplitModule()'s partition assignment for
+// PreserveLocals = RoundRobin = false, without the cloning.
+void llvm::computeModulePartitions(
+    Module &M, unsigned N,
+    std::vector<std::vector<const GlobalValue *>> &Partitions) {
+  for (Function &F : M)
+    externalize(&F);
+  for (GlobalVariable &GV : M.globals())
+    externalize(&GV);
+  for (GlobalAlias &GA : M.aliases())
+    externalize(&GA);
+  for (GlobalIFunc &GIF : M.ifuncs())
+    externalize(&GIF);
+
+  ClusterIDMapType ClusterIDMap;
+  findPartitions(M, ClusterIDMap, N);
+  auto PartitionOf = [&](const GlobalValue *GV) {
+    if (auto It = ClusterIDMap.find(GV); It != ClusterIDMap.end())
+      return It->second;
+    return partitionByHash(GV, N);
+  };
+
+  Partitions.assign(N, {});
+  for (const GlobalVariable &GV : M.globals())
+    if (!GV.isDeclaration())
+      Partitions[PartitionOf(&GV)].push_back(&GV);
+  for (Function &F : M) {
+    if (F.isDeclaration())
+      continue;
+    // Arguments are created on first access; do it now, before the
+    // partitions are written concurrently.
+    (void)F.arg_begin();
+    Partitions[PartitionOf(&F)].push_back(&F);
   }
 }

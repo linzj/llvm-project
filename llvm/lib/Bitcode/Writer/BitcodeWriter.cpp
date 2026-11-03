@@ -210,6 +210,10 @@ protected:
   /// backpatched with the offset of the actual VST.
   uint64_t VSTOffsetPlaceholder = 0;
 
+  // UC_BUILD_LLVM_COMPILER: the partition being written, or null when the
+  // whole module is.
+  const ModulePartitionView *Part = nullptr;
+
 public:
   /// Constructs a ModuleBitcodeWriterBase object for the given Module,
   /// writing to the provided \p Buffer.
@@ -254,7 +258,51 @@ public:
         }
   }
 
+  // UC_BUILD_LLVM_COMPILER: writes only \p Partition of \p M.
+  ModuleBitcodeWriterBase(const Module &M, StringTableBuilder &StrtabBuilder,
+                          BitstreamWriter &Stream,
+                          const ModulePartitionView &Partition)
+      : BitcodeWriterBase(Stream, StrtabBuilder), M(M), VE(M, Partition),
+        Index(nullptr), Part(&Partition) {
+    GlobalValueId = VE.getValues().size();
+  }
+
 protected:
+  // UC_BUILD_LLVM_COMPILER: what is written of each global. Without a
+  // partition these reduce to the plain module walk and properties.
+  bool writesDefinition(const GlobalValue &GV) const {
+    return !GV.isDeclaration() && (!Part || Part->writesDefinition(GV));
+  }
+  /// Another partition's definition is declared with external linkage.
+  GlobalValue::LinkageTypes writtenLinkage(const GlobalValue &GV) const {
+    return GV.isDeclaration() || writesDefinition(GV)
+               ? GV.getLinkage()
+               : GlobalValue::ExternalLinkage;
+  }
+  bool writesMetadataOf(const GlobalValue &GV) const {
+    return !Part || Part->writesMetadataOf(GV);
+  }
+  template <typename CallbackT>
+  void forEachWrittenGlobalVariable(CallbackT Callback) const {
+    if (!Part) {
+      for (const GlobalVariable &GV : M.globals())
+        Callback(GV);
+      return;
+    }
+    for (const GlobalVariable *GV : Part->GlobalVars)
+      Callback(*GV);
+  }
+  template <typename CallbackT>
+  void forEachWrittenFunction(CallbackT Callback) const {
+    if (!Part) {
+      for (const Function &F : M)
+        Callback(F);
+      return;
+    }
+    for (const Function *F : Part->Functions)
+      Callback(*F);
+  }
+
   void writePerModuleGlobalValueSummary();
   void writeGUIDList();
 
@@ -317,6 +365,14 @@ public:
       : ModuleBitcodeWriterBase(M, StrtabBuilder, Stream,
                                 ShouldPreserveUseListOrder, Index),
         GenerateHash(GenerateHash), ModHash(ModHash),
+        BitcodeStartBit(Stream.GetCurrentBitNo()) {}
+
+  // UC_BUILD_LLVM_COMPILER: writes only \p Partition of \p M.
+  ModuleBitcodeWriter(const Module &M, StringTableBuilder &StrtabBuilder,
+                      BitstreamWriter &Stream,
+                      const ModulePartitionView &Partition)
+      : ModuleBitcodeWriterBase(M, StrtabBuilder, Stream, Partition),
+        GenerateHash(false), ModHash(nullptr),
         BitcodeStartBit(Stream.GetCurrentBitNo()) {}
 
   /// Emit the current module to the bitstream.
@@ -1553,7 +1609,10 @@ void ModuleBitcodeWriter::writeModuleInfo() {
   if (!DL.empty())
     writeStringRecord(Stream, bitc::MODULE_CODE_DATALAYOUT, DL, 0 /*TODO*/);
 
+  // UC_BUILD_LLVM_COMPILER: SplitModule() keeps inline asm in one partition.
   for (const Module::GlobalAsmFragment &Frag : M.getModuleInlineAsm()) {
+    if (Part && !Part->WriteModuleInlineAsm)
+      break;
     SmallVector<std::pair<StringRef, StringRef>> Props =
         Frag.Props.getAsStrings();
     for (auto [Key, Value] : Props) {
@@ -1572,7 +1631,8 @@ void ModuleBitcodeWriter::writeModuleInfo() {
   std::map<std::string, unsigned> GCMap;
   MaybeAlign MaxGVarAlignment;
   unsigned MaxGlobalType = 0;
-  for (const GlobalVariable &GV : M.globals()) {
+  // UC_BUILD_LLVM_COMPILER: walk only the globals written.
+  forEachWrittenGlobalVariable([&](const GlobalVariable &GV) {
     if (MaybeAlign A = GV.getAlign())
       MaxGVarAlignment = !MaxGVarAlignment ? *A : std::max(*MaxGVarAlignment, *A);
     MaxGlobalType = std::max(MaxGlobalType, VE.getTypeID(GV.getValueType()));
@@ -1585,8 +1645,8 @@ void ModuleBitcodeWriter::writeModuleInfo() {
         Entry = SectionMap.size();
       }
     }
-  }
-  for (const Function &F : M) {
+  });
+  forEachWrittenFunction([&](const Function &F) {
     if (F.hasSection()) {
       // Give section names unique ID's.
       unsigned &Entry = SectionMap[std::string(F.getSection())];
@@ -1605,7 +1665,7 @@ void ModuleBitcodeWriter::writeModuleInfo() {
         Entry = GCMap.size();
       }
     }
-  }
+  });
 
   // Emit abbrev for globals, now that we know # sections and max alignment.
   unsigned SimpleGVarAbbrev = 0;
@@ -1666,7 +1726,9 @@ void ModuleBitcodeWriter::writeModuleInfo() {
   writeGUIDList();
 
   // Emit the global variable information.
-  for (const GlobalVariable &GV : M.globals()) {
+  // UC_BUILD_LLVM_COMPILER: written globals; other partitions' definitions
+  // as external declarations.
+  forEachWrittenGlobalVariable([&](const GlobalVariable &GV) {
     unsigned AbbrevToUse = 0;
 
     // GLOBALVAR: [strtab offset, strtab size, type, isconst, initid,
@@ -1677,9 +1739,9 @@ void ModuleBitcodeWriter::writeModuleInfo() {
     Vals.push_back(GV.getName().size());
     Vals.push_back(VE.getTypeID(GV.getValueType()));
     Vals.push_back(GV.getType()->getAddressSpace() << 2 | 2 | GV.isConstant());
-    Vals.push_back(GV.isDeclaration() ? 0 :
-                   (VE.getValueID(GV.getInitializer()) + 1));
-    Vals.push_back(getEncodedLinkage(GV));
+    Vals.push_back(
+        !writesDefinition(GV) ? 0 : (VE.getValueID(GV.getInitializer()) + 1));
+    Vals.push_back(getEncodedLinkage(writtenLinkage(GV)));
     Vals.push_back(getEncodedAlign(GV.getAlign()));
     Vals.push_back(GV.hasSection() ? SectionMap[std::string(GV.getSection())]
                                    : 0);
@@ -1714,10 +1776,14 @@ void ModuleBitcodeWriter::writeModuleInfo() {
 
     Stream.EmitRecord(bitc::MODULE_CODE_GLOBALVAR, Vals, AbbrevToUse);
     Vals.clear();
-  }
+  });
 
   // Emit the function proto information.
-  for (const Function &F : M) {
+  // UC_BUILD_LLVM_COMPILER: written functions; other partitions' definitions
+  // as external declarations without personality, prefix or prologue.
+  forEachWrittenFunction([&](const Function &F) {
+    const bool WritesBody = writesDefinition(F);
+    const bool WritesExtras = !Part || WritesBody;
     // FUNCTION:  [strtab offset, strtab size, type, callingconv, isproto,
     //             linkage, paramattrs, alignment, section, visibility, gc,
     //             unnamed_addr, prologuedata, dllstorageclass, comdat,
@@ -1727,8 +1793,8 @@ void ModuleBitcodeWriter::writeModuleInfo() {
     Vals.push_back(F.getName().size());
     Vals.push_back(VE.getTypeID(F.getFunctionType()));
     Vals.push_back(F.getCallingConv());
-    Vals.push_back(F.isDeclaration());
-    Vals.push_back(getEncodedLinkage(F));
+    Vals.push_back(!WritesBody);
+    Vals.push_back(getEncodedLinkage(writtenLinkage(F)));
     Vals.push_back(VE.getAttributeListID(F.getAttributes()));
     Vals.push_back(getEncodedAlign(F.getAlign()));
     Vals.push_back(F.hasSection() ? SectionMap[std::string(F.getSection())]
@@ -1736,14 +1802,17 @@ void ModuleBitcodeWriter::writeModuleInfo() {
     Vals.push_back(getEncodedVisibility(F));
     Vals.push_back(F.hasGC() ? GCMap[F.getGC()] : 0);
     Vals.push_back(getEncodedUnnamedAddr(F));
-    Vals.push_back(F.hasPrologueData() ? (VE.getValueID(F.getPrologueData()) + 1)
-                                       : 0);
+    Vals.push_back(WritesExtras && F.hasPrologueData()
+                       ? (VE.getValueID(F.getPrologueData()) + 1)
+                       : 0);
     Vals.push_back(getEncodedDLLStorageClass(F));
     Vals.push_back(F.hasComdat() ? VE.getComdatID(F.getComdat()) : 0);
-    Vals.push_back(F.hasPrefixData() ? (VE.getValueID(F.getPrefixData()) + 1)
-                                     : 0);
-    Vals.push_back(
-        F.hasPersonalityFn() ? (VE.getValueID(F.getPersonalityFn()) + 1) : 0);
+    Vals.push_back(WritesExtras && F.hasPrefixData()
+                       ? (VE.getValueID(F.getPrefixData()) + 1)
+                       : 0);
+    Vals.push_back(WritesExtras && F.hasPersonalityFn()
+                       ? (VE.getValueID(F.getPersonalityFn()) + 1)
+                       : 0);
 
     Vals.push_back(F.isDSOLocal());
     Vals.push_back(F.getAddressSpace());
@@ -1754,7 +1823,7 @@ void ModuleBitcodeWriter::writeModuleInfo() {
     unsigned AbbrevToUse = 0;
     Stream.EmitRecord(bitc::MODULE_CODE_FUNCTION, Vals, AbbrevToUse);
     Vals.clear();
-  }
+  });
 
   // Emit the alias information.
   for (const GlobalAlias &A : M.aliases()) {
@@ -2549,7 +2618,9 @@ void ModuleBitcodeWriter::writeNamedMetadata(
 
     // Write named metadata operands.
     for (const MDNode *N : NMD.operands())
-      Record.push_back(VE.getMetadataID(N));
+      // UC_BUILD_LLVM_COMPILER: a partition keeps only its own debug units.
+      if (!Part || Part->writesNamedMetadataOperand(NMD, N))
+        Record.push_back(VE.getMetadataID(N));
     Stream.EmitRecord(bitc::METADATA_NAMED_NODE, Record, 0);
     Record.clear();
   }
@@ -2726,17 +2797,20 @@ void ModuleBitcodeWriter::writeModuleMetadata() {
     pushGlobalMetadataAttachment(Record, GO);
     Stream.EmitRecord(bitc::METADATA_GLOBAL_DECL_ATTACHMENT, Record);
   };
-  for (const Function &F : M)
-    if (F.isDeclaration() && F.hasMetadata())
+  // UC_BUILD_LLVM_COMPILER: of the globals written, those whose metadata is.
+  forEachWrittenFunction([&](const Function &F) {
+    if (!writesDefinition(F) && writesMetadataOf(F) && F.hasMetadata())
       AddDeclAttachedMetadata(F);
+  });
   for (const GlobalIFunc &GI : M.ifuncs())
     if (GI.hasMetadata())
       AddDeclAttachedMetadata(GI);
   // FIXME: Only store metadata for declarations here, and move data for global
   // variable definitions to a separate block (PR28134).
-  for (const GlobalVariable &GV : M.globals())
-    if (GV.hasMetadata())
+  forEachWrittenGlobalVariable([&](const GlobalVariable &GV) {
+    if (writesMetadataOf(GV) && GV.hasMetadata())
       AddDeclAttachedMetadata(GV);
+  });
 
   Stream.ExitBlock();
 }
@@ -3709,11 +3783,12 @@ void ModuleBitcodeWriter::writeGlobalValueSymbolTable(
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
   unsigned FnEntryAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
-  for (const Function &F : M) {
+  // UC_BUILD_LLVM_COMPILER: the function bodies written.
+  forEachWrittenFunction([&](const Function &F) {
     uint64_t Record[2];
 
-    if (F.isDeclaration())
-      continue;
+    if (!writesDefinition(F))
+      return;
 
     Record[0] = VE.getValueID(&F);
 
@@ -3727,7 +3802,7 @@ void ModuleBitcodeWriter::writeGlobalValueSymbolTable(
     Record[1] = BitcodeIndex / 32 + 1;
 
     Stream.EmitRecord(bitc::VST_CODE_FNENTRY, Record, FnEntryAbbrev);
-  }
+  });
 
   Stream.ExitBlock();
 }
@@ -5014,6 +5089,9 @@ void ModuleBitcodeWriterBase::writeGUIDList() {
 
   std::vector<GlobalValue::GUID> GUIDs(Max, 0);
   for (const GlobalValue &GV : M.global_values()) {
+    // UC_BUILD_LLVM_COMPILER: only the globals a partition writes have IDs.
+    if (Part && !Part->includes(GV))
+      continue;
     auto MaybeGUID = GV.getGUIDIfAssigned();
     if (!MaybeGUID)
       continue;
@@ -5520,9 +5598,11 @@ void ModuleBitcodeWriter::write() {
 
   // Emit function bodies.
   DenseMap<const Function *, uint64_t> FunctionToBitcodeIndex;
-  for (const Function &F : M)
-    if (!F.isDeclaration())
+  // UC_BUILD_LLVM_COMPILER: only the bodies the partition defines.
+  forEachWrittenFunction([&](const Function &F) {
+    if (writesDefinition(F))
       writeFunction(F, FunctionToBitcodeIndex);
+  });
 
   // Need to write after the above call to WriteFunction which populates
   // the summary information in the index.
@@ -5704,6 +5784,27 @@ void BitcodeWriter::writeModule(const Module &M,
   ModuleBitcodeWriter ModuleWriter(M, StrtabBuilder, *Stream,
                                    ShouldPreserveUseListOrder, Index,
                                    GenerateHash, ModHash);
+  ModuleWriter.write();
+}
+
+// UC_BUILD_LLVM_COMPILER
+bool llvm::canWriteModulePartitions(const Module &M) {
+  if (!M.alias_empty() || !M.ifunc_empty() || !M.getComdatSymbolTable().empty())
+    return false;
+  for (const GlobalVariable &GV : M.globals())
+    if (GV.hasAppendingLinkage())
+      return false;
+  return true;
+}
+
+void BitcodeWriter::writeModulePartition(
+    const Module &M, ArrayRef<const GlobalValue *> Definitions,
+    bool WriteModuleInlineAsm) {
+  assert(!WroteStrtab);
+  assert(M.isMaterialized());
+  // Not added to Mods: no symbol table is built for a partition.
+  ModulePartitionView Partition(M, Definitions, WriteModuleInlineAsm);
+  ModuleBitcodeWriter ModuleWriter(M, StrtabBuilder, *Stream, Partition);
   ModuleWriter.write();
 }
 
