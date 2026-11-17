@@ -178,6 +178,9 @@ Register MachineRegisterInfo::cloneVirtualRegister(Register VReg,
   Register Reg = createIncompleteVirtualRegister(Name);
   VRegInfo[Reg].first = VRegInfo[VReg].first;
   setType(Reg, getType(VReg));
+  // BUGFIX llvm23-clone-vreg-observed: preserve StatepointObserved when
+  // splitSeparateComponents clones an unsplit original virtual register.
+  syncStatepointObserved(VReg, Reg);
   noteCloneVirtualRegister(Reg, VReg);
   return Reg;
 }

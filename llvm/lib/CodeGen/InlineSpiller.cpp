@@ -1517,7 +1517,7 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
       for (MachineBasicBlock::iterator MII = MBB->begin(), EE = MBB->end();
            MII != EE; ++MII) {
         MachineInstr &MI = *MII;
-        if (MI.isKill())
+        if (MI.isKill() || MI.isDebugInstr())
           continue;
         for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
           MachineOperand &MO = MI.getOperand(i);
@@ -1536,9 +1536,13 @@ void InlineSpiller::shrinkStackIntervalToUse(int Slot) {
           // drop in reported roots (85,136 -> 54,975) and a sharp rise in
           // dangling-pointer crashes. Treat anything that touches the slot and
           // is not provably a reload as a def.
+          // BUGFIX llvm23-statepoint-slot-liveness: also recognise subregister
+          // and folded memory loads (mayLoad && !mayStore) as pure loads so
+          // they are not misclassified as stores.
           int LoadFI = 0;
           const bool IsPureLoad =
-              TII.isLoadFromStackSlot(MI, LoadFI) && LoadFI == FI;
+              (TII.isLoadFromStackSlot(MI, LoadFI) && LoadFI == FI) ||
+              (MI.mayLoad() && !MI.mayStore());
           if (!IsPureLoad) {
             // It's a def.
             HasStore.set(MBB->getNumber());

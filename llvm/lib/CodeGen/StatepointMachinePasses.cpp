@@ -10,9 +10,7 @@
 // To be written.
 //
 //===----------------------------------------------------------------------===//
-#include <atomic>
-#include <cstdlib>
-
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -20,7 +18,6 @@
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveStacks.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
-#include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -50,18 +47,6 @@
 
 #define DEBUG_TYPE "statepoint-simplify"
 using namespace llvm;
-namespace {
-struct DartSiblingStats {
-  std::atomic<uint64_t> Count{0}, RegRecs{0};
-  ~DartSiblingStats() {
-    if (getenv("STATEPOINT_STATS") != nullptr)
-      llvm::errs() << "SIBLING-LIVE slots_added=" << Count
-                   << " reg_records=" << RegRecs << "\n";
-  }
-};
-} // namespace
-static DartSiblingStats DartSiblingStatsInst;
-#define DartSiblingLiveSlots DartSiblingStatsInst.Count
 namespace {
 
 class StatepointSimplify : public MachineFunctionPass {
@@ -105,15 +90,11 @@ public:
 
 private:
   bool rewriteStatepoints(MachineFunction &);
-  bool rewriteStatepoint(MachineFunction &, MachineInstr *MI);
+  bool rewriteStatepoint(MachineFunction &, MachineInstr *MI,
+                         const BitVector &LiveSlots);
 
   SmallVector<Register, 8> ObservedRegistersWithPhys;
   SmallVector<int, 8> ObservedStackSlots;
-  // BUGFIX llvm23-slot-live-through-sibling: every virtual register of the
-  // split family whose spill slot this is (VirtRegMap original), including the
-  // siblings the allocator kept in registers.
-  DenseMap<int, SmallVector<Register, 4>> SlotSiblingRegs;
-  MachineDominatorTree *MDT = nullptr;
   SlotIndexes *Indexes;
   LiveIntervals *LIS;
   LiveStacks *LSS;
@@ -265,12 +246,10 @@ void StatepointRewrite::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LiveIntervalsWrapperPass>();
   AU.addRequired<LiveStacksWrapperLegacy>();
   AU.addRequired<VirtRegMapWrapperLegacy>();
-  AU.addRequired<MachineDominatorTreeWrapperPass>();
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
 bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
-  MDT = &getAnalysis<MachineDominatorTreeWrapperPass>().getDomTree();
   Indexes = &getAnalysis<SlotIndexesWrapperPass>().getSI();
   LIS = &getAnalysis<LiveIntervalsWrapperPass>().getLIS();
   LSS = &getAnalysis<LiveStacksWrapperLegacy>().getLS();
@@ -281,7 +260,7 @@ bool StatepointRewrite::runOnMachineFunction(MachineFunction &MF) {
 
 bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   bool Changed = false;
-  SmallVector<MachineInstr *, 8> WorkList;
+  SmallVector<std::pair<MachineInstr *, BitVector>, 8> WorkList;
 
   // Setup observed registers lists.
   ObservedRegistersWithPhys = MRI->getStatePointObservedActiveRegs();
@@ -291,31 +270,6 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   for (int i = 0, e = MFI->getObjectIndexEnd(); i != e; ++i) {
     if (MFI->isStatepointSpillSlotObjectIndex(i))
       ObservedStackSlots.emplace_back(i);
-  }
-
-  // BUGFIX llvm23-slot-live-through-sibling: group the virtual registers by
-  // their pre-split original and attach the whole family to the slot the
-  // family spills to. See AddStackSlot in rewriteStatepoint() for why.
-  SlotSiblingRegs.clear();
-  {
-    DenseMap<Register, SmallVector<Register, 4>> ByOriginal;
-    for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
-      Register V = Register::index2VirtReg(I);
-      if (MRI->reg_nodbg_empty(V) && !LIS->hasInterval(V))
-        continue;
-      ByOriginal[VRM->getOriginal(V)].push_back(V);
-    }
-    for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
-      Register V = Register::index2VirtReg(I);
-      const int FI = VRM->getStackSlot(V);
-      if (FI == VirtRegMap::NO_STACK_SLOT ||
-          !MFI->isStatepointSpillSlotObjectIndex(FI))
-        continue;
-      auto &Sibs = SlotSiblingRegs[FI];
-      for (Register S : ByOriginal[VRM->getOriginal(V)])
-        if (!llvm::is_contained(Sibs, S))
-          Sibs.push_back(S);
-    }
   }
 
   // BUGFIX llvm23-statepoint-undef-slot: a value that the register allocator
@@ -402,27 +356,287 @@ bool StatepointRewrite::rewriteStatepoints(MachineFunction &MF) {
   // the IMPLICIT_DEF SplitEditor::defFromParent() emitted for a dead parent
   // value. That is now closed at the source (llvm23-split-observed-full-copy
   // in SplitKit.cpp): an observed value is always defined with a real COPY at
-  // a split point, so every slot LiveStacks calls live has been written on
-  // every path and is reported, as in LLVM 10 -- no dataflow, no dropped
-  // roots, no fallback stores.
+  // a split point, so a slot whose contents are still needed has been written
+  // on every path and no fallback stores are required. The MustInit/MayRead
+  // dataflow below (llvm23-statepoint-slot-liveness) does a different job: it
+  // decides at each statepoint whether the slot's current contents are still
+  // a live root.
 
-  for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
-    MachineBasicBlock *MBB = &*I;
-    for (MachineInstr &MI : *MBB) {
-      switch (MI.getOpcode()) {
-      case TargetOpcode::STATEPOINT:
-        WorkList.emplace_back(&MI);
-        break;
+  // BUGFIX llvm23-statepoint-slot-liveness: report an observed spill slot at a
+  // statepoint iff every reachable path from entry has written the full slot
+  // (MustInit) and some path after the statepoint reads the slot before it is
+  // overwritten (MayRead). Tracking sibling virtual registers instead falsely
+  // resurrected dead slots whose register was redefined without re-spilling.
+  if (ObservedStackSlots.empty()) {
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : MBB)
+        if (MI.getOpcode() == TargetOpcode::STATEPOINT)
+          WorkList.emplace_back(&MI, BitVector());
+  } else {
+    const unsigned NumSlots = ObservedStackSlots.size();
+    DenseMap<int, unsigned> SlotToBit;
+    SlotToBit.reserve(NumSlots);
+    for (unsigned Bit = 0; Bit < NumSlots; ++Bit)
+      SlotToBit[ObservedStackSlots[Bit]] = Bit;
+
+    const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+    const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+
+    auto ClassifyMI = [&](const MachineInstr &MI, BitVector &ReadBits,
+                          BitVector &FullWriteBits) {
+      ReadBits.reset();
+      FullWriteBits.reset();
+      if (MI.isDebugInstr() || MI.isKill() || MI.isImplicitDef() ||
+          MI.getOpcode() == TargetOpcode::STATEPOINT)
+        return;
+
+      int LoadFI = 0;
+      if (TII->isLoadFromStackSlot(MI, LoadFI)) {
+        auto It = SlotToBit.find(LoadFI);
+        if (It != SlotToBit.end())
+          ReadBits.set(It->second);
+        return;
+      }
+
+      int StoreFI = 0;
+      TypeSize StoreBytes = TypeSize::getZero();
+      if (Register StoreReg =
+              TII->isStoreToStackSlot(MI, StoreFI, StoreBytes)) {
+        auto It = SlotToBit.find(StoreFI);
+        if (It != SlotToBit.end() && !TII->isPredicated(MI)) {
+          const uint64_t ObjSize =
+              static_cast<uint64_t>(MFI->getObjectSize(StoreFI));
+          uint64_t Written = 0;
+          if (!StoreBytes.isZero() && !StoreBytes.isScalable()) {
+            Written = StoreBytes.getFixedValue();
+          } else {
+            for (const MachineMemOperand *MMO : MI.memoperands()) {
+              const PseudoSourceValue *PSV = MMO->getPseudoValue();
+              if (PSV && PSV->kind() == PseudoSourceValue::FixedStack &&
+                  cast<FixedStackPseudoSourceValue>(PSV)->getFrameIndex() ==
+                      StoreFI &&
+                  MMO->getOffset() == 0) {
+                const LLT MemTy = MMO->getType();
+                if (MemTy.isValid() && !MemTy.isScalable()) {
+                  Written = MemTy.getSizeInBytes().getFixedValue();
+                  break;
+                }
+              }
+            }
+            if (Written == 0 && StoreReg.isValid()) {
+              if (StoreReg.isVirtual())
+                Written = TRI->getSpillSize(*MRI->getRegClass(StoreReg));
+              else if (const TargetRegisterClass *RC =
+                           TRI->getMinimalPhysRegClass(StoreReg))
+                Written = TRI->getSpillSize(*RC);
+            }
+          }
+          if (Written >= ObjSize)
+            FullWriteBits.set(It->second);
+        }
+        return;
+      }
+
+      bool SawMMO = false;
+      for (const MachineMemOperand *MMO : MI.memoperands()) {
+        const PseudoSourceValue *PSV = MMO->getPseudoValue();
+        if (!PSV || PSV->kind() != PseudoSourceValue::FixedStack)
+          continue;
+        SawMMO = true;
+        const int FI = cast<FixedStackPseudoSourceValue>(PSV)->getFrameIndex();
+        auto It = SlotToBit.find(FI);
+        if (It == SlotToBit.end())
+          continue;
+        // Classify by the MMO itself, not by MI.mayLoad()/mayStore(): one
+        // instruction can carry a load MMO for one slot and a store MMO for
+        // another (e.g. SystemZ folds a spilled load or store into a
+        // memory-to-memory MVC), and the store side must still count as a
+        // full write. A load+store MMO (read-modify-write) is only a read.
+        if (MMO->isLoad())
+          ReadBits.set(It->second);
+        if (MMO->isStore() && !MMO->isLoad() && !TII->isPredicated(MI)) {
+          const uint64_t ObjSize =
+              static_cast<uint64_t>(MFI->getObjectSize(FI));
+          const LLT MemTy = MMO->getType();
+          const uint64_t Sz = (MemTy.isValid() && !MemTy.isScalable())
+                                  ? MemTy.getSizeInBytes().getFixedValue()
+                                  : 0;
+          const int64_t Off = MMO->getOffset();
+          if (Off <= 0 && Sz >= ObjSize + static_cast<uint64_t>(-Off))
+            FullWriteBits.set(It->second);
+        }
+      }
+      if (!SawMMO) {
+        for (const MachineOperand &MO : MI.operands()) {
+          if (!MO.isFI())
+            continue;
+          auto It = SlotToBit.find(MO.getIndex());
+          if (It == SlotToBit.end())
+            continue;
+          if (MI.mayLoad())
+            ReadBits.set(It->second);
+          else if (MI.mayStore() && !TII->isPredicated(MI))
+            FullWriteBits.set(It->second);
+        }
+      }
+    };
+
+    const unsigned MaxBB = MF.getNumBlockIDs();
+    BitVector Reachable(MaxBB);
+    if (!MF.empty()) {
+      SmallVector<const MachineBasicBlock *, 16> RQueue;
+      Reachable.set(MF.front().getNumber());
+      RQueue.push_back(&MF.front());
+      while (!RQueue.empty()) {
+        const MachineBasicBlock *Cur = RQueue.pop_back_val();
+        for (const MachineBasicBlock *Succ : Cur->successors()) {
+          if (!Reachable.test(Succ->getNumber())) {
+            Reachable.set(Succ->getNumber());
+            RQueue.push_back(Succ);
+          }
+        }
       }
     }
+
+    std::vector<BitVector> BlockGenInit(MaxBB, BitVector(NumSlots));
+    std::vector<BitVector> BlockGenRead(MaxBB, BitVector(NumSlots));
+    std::vector<BitVector> BlockKillWrite(MaxBB, BitVector(NumSlots));
+    BitVector ReadBits(NumSlots), FullWriteBits(NumSlots);
+
+    for (MachineBasicBlock &MBB : MF) {
+      const unsigned B = MBB.getNumber();
+      if (!Reachable.test(B))
+        continue;
+      BitVector &GenInit = BlockGenInit[B];
+      BitVector &GenRead = BlockGenRead[B];
+      BitVector &KillWrite = BlockKillWrite[B];
+      for (const MachineInstr &MI : llvm::reverse(MBB)) {
+        ClassifyMI(MI, ReadBits, FullWriteBits);
+        GenInit |= FullWriteBits;
+        GenRead.reset(FullWriteBits);
+        KillWrite |= FullWriteBits;
+        GenRead |= ReadBits;
+        KillWrite.reset(ReadBits);
+      }
+    }
+
+    // Forward greatest fixed point: MustInit.
+    const BitVector AllOnes(NumSlots, true);
+    std::vector<BitVector> InitIn(MaxBB, BitVector(NumSlots));
+    std::vector<BitVector> InitOut(MaxBB, AllOnes);
+    if (!MF.empty()) {
+      const unsigned EntryB = MF.front().getNumber();
+      InitOut[EntryB] = BlockGenInit[EntryB];
+      bool IterChanged = true;
+      BitVector NewIn(NumSlots), NewOut(NumSlots);
+      while (IterChanged) {
+        IterChanged = false;
+        for (MachineBasicBlock &MBB : MF) {
+          const unsigned B = MBB.getNumber();
+          if (!Reachable.test(B) || &MBB == &MF.front())
+            continue;
+          NewIn = AllOnes;
+          for (const MachineBasicBlock *Pred : MBB.predecessors()) {
+            if (Reachable.test(Pred->getNumber()))
+              NewIn &= InitOut[Pred->getNumber()];
+          }
+          InitIn[B] = NewIn;
+          NewOut = NewIn;
+          NewOut |= BlockGenInit[B];
+          if (NewOut != InitOut[B]) {
+            InitOut[B] = NewOut;
+            IterChanged = true;
+          }
+        }
+      }
+    }
+
+    // Backward least fixed point: MayRead before full overwrite.
+    std::vector<BitVector> MayReadIn(MaxBB, BitVector(NumSlots));
+    std::vector<BitVector> MayReadOut(MaxBB, BitVector(NumSlots));
+    {
+      bool IterChanged = true;
+      BitVector NewOut(NumSlots), NewIn(NumSlots);
+      while (IterChanged) {
+        IterChanged = false;
+        for (MachineBasicBlock &MBB : llvm::reverse(MF)) {
+          const unsigned B = MBB.getNumber();
+          if (!Reachable.test(B))
+            continue;
+          NewOut.reset();
+          for (const MachineBasicBlock *Succ : MBB.successors()) {
+            if (Reachable.test(Succ->getNumber()))
+              NewOut |= MayReadIn[Succ->getNumber()];
+          }
+          MayReadOut[B] = NewOut;
+          NewIn = NewOut;
+          NewIn.reset(BlockKillWrite[B]);
+          NewIn |= BlockGenRead[B];
+          if (NewIn != MayReadIn[B]) {
+            MayReadIn[B] = NewIn;
+            IterChanged = true;
+          }
+        }
+      }
+    }
+
+    // Collect STATEPOINTs with their exact live slot bitvectors.
+    for (MachineBasicBlock &MBB : MF) {
+      bool HasSP = false;
+      for (MachineInstr &MI : MBB) {
+        if (MI.getOpcode() == TargetOpcode::STATEPOINT) {
+          HasSP = true;
+          break;
+        }
+      }
+      if (!HasSP)
+        continue;
+
+      const unsigned B = MBB.getNumber();
+      if (!Reachable.test(B)) {
+        for (MachineInstr &MI : MBB)
+          if (MI.getOpcode() == TargetOpcode::STATEPOINT)
+            WorkList.emplace_back(&MI, BitVector(NumSlots));
+        continue;
+      }
+
+      DenseMap<const MachineInstr *, BitVector> InitAtSP;
+      BitVector CurInit = InitIn[B];
+      for (MachineInstr &MI : MBB) {
+        if (MI.getOpcode() == TargetOpcode::STATEPOINT) {
+          InitAtSP.try_emplace(&MI, CurInit);
+        } else {
+          ClassifyMI(MI, ReadBits, FullWriteBits);
+          CurInit |= FullWriteBits;
+        }
+      }
+
+      SmallVector<std::pair<MachineInstr *, BitVector>, 4> BlockSPs;
+      BitVector CurMayRead = MayReadOut[B];
+      for (MachineInstr &MI : llvm::reverse(MBB)) {
+        if (MI.getOpcode() == TargetOpcode::STATEPOINT) {
+          BitVector LiveAtSP = InitAtSP.lookup(&MI);
+          LiveAtSP &= CurMayRead;
+          BlockSPs.emplace_back(&MI, std::move(LiveAtSP));
+        } else {
+          ClassifyMI(MI, ReadBits, FullWriteBits);
+          CurMayRead.reset(FullWriteBits);
+          CurMayRead |= ReadBits;
+        }
+      }
+      for (auto &Entry : llvm::reverse(BlockSPs))
+        WorkList.push_back(std::move(Entry));
+    }
   }
-  for (MachineInstr *MI : WorkList)
-    Changed |= rewriteStatepoint(MF, MI);
+
+  for (auto &Entry : WorkList)
+    Changed |= rewriteStatepoint(MF, Entry.first, Entry.second);
   return Changed;
 }
 
 bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
-                                          MachineInstr *StatePoint) {
+                                          MachineInstr *StatePoint,
+                                          const BitVector &LiveSlots) {
   MachineFrameInfo *MFI = &MF.getFrameInfo();
   // Ready to rebuild the StatePoint.
   const TargetSubtargetInfo &STI = MF.getSubtarget();
@@ -455,71 +669,25 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
   };
   SmallVector<GCRecord, 8> NewRecords;
 
-  const TargetInstrInfo *TII2 = MF.getSubtarget().getInstrInfo();
-  (void)TII2;
-  auto AddStackSlot = [&](int StackSlot) {
-    LiveInterval &Interval = LSS->getInterval(StackSlot);
-    bool Live = Interval.liveAt(Index);
-    // BUGFIX llvm23-slot-live-through-sibling: LiveStacks only merges the
-    // intervals of the registers InlineSpiller actually spilled. When greedy
-    // splits a value around a cold call block ("lr-split COPY" into a sibling
-    // that stays in a register across the call) and copies it back
-    // afterwards, the slot's interval has a hole across that call, yet the
-    // spiller still reloads from the slot later, because the copy-back is the
-    // same value and eliminateRedundantSpills() found it already spilled. For
-    // a plain value that is fine; for a gc pointer the object may move at the
-    // call, the register copy is updated (shared stub push / CSR slots) but
-    // the unreported slot keeps the old address, and the later reload hands
-    // the mutator a stale pointer (JpegEncoder.encode, slot %stack.7 across
-    // mock_call_CheckStackOverflow -> SEGV_ACCERR in the freed semispace).
-    // The slot is a root for as long as any sibling of the family is live.
-    if (!Live) {
-      // BUGFIX llvm23-sibling-slot-dominated: a sibling in a register may be
-      // live before the family was ever spilled (MethodChannel._invokeMethod:
-      // the only store to sp+0x28 came 0x30 bytes after the call at which a
-      // sibling was live, and the previous frame's leftover went to the
-      // scavenger). Report through a sibling only when a point where the
-      // slot itself is live dominates this statepoint: then every path here
-      // has passed a spill of the value, and the slot holds it (the spiller
-      // elided the copy-back's re-spill for exactly that reason).
-      auto SlotLiveBeforeDominates = [&]() {
-        MachineBasicBlock *MBB = StatePoint->getParent();
-        for (const LiveInterval::Segment &Seg : Interval) {
-          if (Seg.start >= Index)
-            continue;
-          MachineBasicBlock *SB = Indexes->getMBBFromIndex(Seg.start);
-          if (SB == MBB || MDT->dominates(SB, MBB))
-            return true;
-        }
-        return false;
-      };
-      auto It = SlotSiblingRegs.find(StackSlot);
-      if (It != SlotSiblingRegs.end() && SlotLiveBeforeDominates())
-        for (Register S : It->second)
-          if (LIS->hasInterval(S) && LIS->getInterval(S).liveAt(Index)) {
-            Live = true;
-            ++DartSiblingLiveSlots;
-            break;
-          }
-      if (Live && Interval.getNumValNums() > 0) {
-        // Keep LiveStacks consistent with the record (the verifier checks
-        // the statepoint's memoperand against it, and StackSlotColoring must
-        // not hand the slot to another value across this call).
+  for (unsigned Bit = 0, E = ObservedStackSlots.size(); Bit != E; ++Bit) {
+    if (!LiveSlots.test(Bit))
+      continue;
+    const int StackSlot = ObservedStackSlots[Bit];
+    if (!RecordedStackSlot.insert(StackSlot).second)
+      continue;
+    if (LSS->hasInterval(StackSlot)) {
+      LiveInterval &Interval = LSS->getInterval(StackSlot);
+      if (!Interval.liveAt(Index) && Interval.getNumValNums() > 0) {
         const SlotIndex SPIdx = Indexes->getInstructionIndex(*StatePoint);
         Interval.addSegment(LiveInterval::Segment(SPIdx.getBaseIndex(),
                                                   SPIdx.getDeadSlot(),
                                                   Interval.getValNumInfo(0)));
       }
     }
-    if (!Live)
-      return;
-    if (!RecordedStackSlot.insert(StackSlot).second)
-      return;
     NewRecords.push_back(
         {true, static_cast<int>(MFI->getObjectSize(StackSlot)), StackSlot, {}});
-  };
+  }
 
-  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
   auto AddPhysIfLiveOut = [&](Register Reg) {
     if (!LIS->hasInterval(Reg) || !LIS->getInterval(Reg).liveAt(Index)) {
       return false;
@@ -544,15 +712,9 @@ bool StatepointRewrite::rewriteStatepoint(MachineFunction &MF,
     const VNInfo *VNI = LIS->getInterval(Reg).getVNInfoAt(Index);
     if (!VNI || VNI->isUnused())
       return false;
-    ++DartSiblingStatsInst.RegRecs;
     NewRecords.push_back({false, 0, 0, Reg});
     return true;
   };
-
-  // Add Stack Slots
-  for (int StackSlot : ObservedStackSlots) {
-    AddStackSlot(StackSlot);
-  }
 
   for (Register r : ObservedRegistersWithPhys) {
     AddPhysIfLiveOut(r);
